@@ -30,7 +30,7 @@ import type {
   SearchProvider,
   SearchProviderConfig
 } from "../shared/types";
-import { getDomain } from "../shared/utils";
+import { buildEmbeddingFingerprint, getDomain } from "../shared/utils";
 import { createId } from "../shared/ids";
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
@@ -102,11 +102,21 @@ function mergeBookmarks(current: Bookmark[], incoming: Bookmark[]) {
     }
     const isIncomingNewer = bookmark.createdAt > existing.createdAt;
     const source = isIncomingNewer ? bookmark : existing;
+    let embedding = existing.embedding;
+    let embeddingFingerprint = existing.embeddingFingerprint;
+    if (isIncomingNewer && Array.isArray(bookmark.embedding)) {
+      embedding = bookmark.embedding;
+      embeddingFingerprint = bookmark.embeddingFingerprint || undefined;
+    }
     map.set(bookmark.url, {
       id: existing.id,
       url: existing.url,
       title: source.title,
       excerpt: source.excerpt,
+      summaryLong: source.summaryLong || source.excerpt,
+      embedding,
+      embeddingFingerprint,
+      favicon: source.favicon ?? existing.favicon,
       categoryId: source.categoryId,
       pinned: existing.pinned || bookmark.pinned,
       createdAt: Math.max(existing.createdAt, bookmark.createdAt)
@@ -189,7 +199,8 @@ export default function App() {
         rerank: {
           ...state.search.rerank,
           apiKey: ""
-        }
+        },
+        minScore: state.search.minScore
       });
     }
   }, [state]);
@@ -244,10 +255,12 @@ export default function App() {
       const title = bookmark.title || "";
       const url = bookmark.url || "";
       const excerpt = bookmark.excerpt || "";
+      const summaryLong = bookmark.summaryLong || "";
       return (
         title.toLowerCase().includes(term) ||
         url.toLowerCase().includes(term) ||
-        excerpt.toLowerCase().includes(term)
+        excerpt.toLowerCase().includes(term) ||
+        summaryLong.toLowerCase().includes(term)
       );
     });
   }, [state, deferredBookmarkQuery, bookmarkCategoryId]);
@@ -298,6 +311,9 @@ export default function App() {
       return;
     }
     const normalizedName = categoryName.trim();
+    const nextCategoryId = createId();
+    const nextCreatedAt = Date.now();
+    const nextColor = categoryColor;
     const hasDuplicate = state?.categories.some((category) => {
       if (editingCategory && category.id === editingCategory.id) {
         return false;
@@ -314,20 +330,29 @@ export default function App() {
           ...current,
           categories: current.categories.map((category) =>
             category.id === editingCategory.id
-              ? { ...category, name: normalizedName, color: categoryColor }
+              ? { ...category, name: normalizedName, color: nextColor }
               : category
           )
         };
+      }
+      const alreadyExists = current.categories.some((category) => {
+        if (category.id === nextCategoryId) {
+          return true;
+        }
+        return category.name.trim().toLowerCase() === normalizedName.toLowerCase();
+      });
+      if (alreadyExists) {
+        return current;
       }
       return {
         ...current,
         categories: [
           ...current.categories,
           {
-            id: createId(),
+            id: nextCategoryId,
             name: normalizedName,
-            color: categoryColor,
-            createdAt: Date.now()
+            color: nextColor,
+            createdAt: nextCreatedAt
           }
         ]
       };
@@ -361,6 +386,8 @@ export default function App() {
       setTransientStatus("请输入规则域名", "error");
       return;
     }
+    const nextRuleId = createId();
+    const nextCreatedAt = Date.now();
     const hasDuplicate = state?.rules.some((rule) => rule.domain === domain);
     if (hasDuplicate) {
       setTransientStatus("该域名已存在规则", "error");
@@ -368,15 +395,17 @@ export default function App() {
     }
     await update((current) => ({
       ...current,
-      rules: [
-        ...current.rules,
-        {
-          id: createId(),
-          domain,
-          categoryId: ruleCategoryId,
-          createdAt: Date.now()
-        }
-      ]
+      rules: current.rules.some((rule) => rule.domain === domain || rule.id === nextRuleId)
+        ? current.rules
+        : [
+            ...current.rules,
+            {
+              id: nextRuleId,
+              domain,
+              categoryId: ruleCategoryId,
+              createdAt: nextCreatedAt
+            }
+          ]
     }));
     setRuleDomain("");
     setRuleDialogOpen(false);
@@ -457,6 +486,16 @@ export default function App() {
         ...prev.rerank,
         enabled
       }
+    }));
+  };
+
+  const setSearchMinScore = (value: number) => {
+    if (Number.isNaN(value)) {
+      return;
+    }
+    setSearchDraft((prev) => ({
+      ...prev,
+      minScore: Math.min(Math.max(value, 0), 1)
     }));
   };
 
@@ -607,22 +646,35 @@ export default function App() {
       }
     }
 
+    const nextEmbeddingConfig = {
+      provider: searchDraft.embedding.provider,
+      baseUrl: embeddingBaseUrl,
+      apiKey: embeddingApiKey,
+      model: embeddingModel
+    };
+    const embeddingChanged =
+      buildEmbeddingFingerprint(nextEmbeddingConfig) !==
+      buildEmbeddingFingerprint(state.search.embedding);
+
     await update((current) => ({
       ...current,
+      bookmarks: embeddingChanged
+        ? current.bookmarks.map((bookmark) => ({
+            ...bookmark,
+            embedding: undefined,
+            embeddingFingerprint: undefined
+          }))
+        : current.bookmarks,
       search: {
-        embedding: {
-          provider: searchDraft.embedding.provider,
-          baseUrl: embeddingBaseUrl,
-          apiKey: embeddingApiKey,
-          model: embeddingModel
-        },
+        embedding: nextEmbeddingConfig,
         rerank: {
           enabled: rerankEnabled,
           provider: searchDraft.rerank.provider,
           baseUrl: rerankBaseUrl || current.search.rerank.baseUrl,
           apiKey: rerankEnabled ? rerankApiKey : current.search.rerank.apiKey,
           model: rerankModel || current.search.rerank.model
-        }
+        },
+        minScore: searchDraft.minScore
       }
     }));
     setTransientStatus("已保存搜索配置");
@@ -637,7 +689,8 @@ export default function App() {
       rerank: {
         ...DEFAULT_STATE.search.rerank,
         apiKey: ""
-      }
+      },
+      minScore: DEFAULT_STATE.search.minScore
     });
     setTransientStatus("已恢复搜索默认配置");
   }, [setTransientStatus]);
@@ -651,7 +704,7 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `autofav-export-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `favortex-export-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
@@ -788,7 +841,7 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
               <span className="chip">Setup</span>
-              <h1 className="mt-3 text-2xl font-semibold text-slate-900">AutoFav 设置中心</h1>
+              <h1 className="mt-3 text-2xl font-semibold text-slate-900">Favortex 设置中心</h1>
               <p className="mt-2 text-sm text-slate-600">
                 配置分类、规则和 AI 供应商，让收藏自动完成。
               </p>
@@ -1548,6 +1601,37 @@ export default function App() {
                         留空则使用已保存的 Key（修改 Base URL 时需重新填写）。
                       </div>
                     ) : null}
+                  </label>
+
+                  <label className="space-y-2">
+                    <FieldLabel label="AI 匹配下限" />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <input
+                        type="range"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={searchDraft.minScore}
+                        onChange={(event) =>
+                          setSearchMinScore(Number(event.target.value))
+                        }
+                        className="h-2 flex-1 cursor-pointer accent-slate-700"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        className="input-field w-24"
+                        value={searchDraft.minScore}
+                        onChange={(event) =>
+                          setSearchMinScore(Number(event.target.value))
+                        }
+                      />
+                    </div>
+                    <div className="text-xs text-slate-500">
+                      低于该相似度的结果会被过滤。
+                    </div>
                   </label>
 
                   <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-4">

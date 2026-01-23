@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AppState } from "./types";
-import { loadState, updateState, STORAGE_KEY } from "./storage";
+import { loadState, updateState, LEGACY_STORAGE_KEY, STORAGE_KEY } from "./storage";
 import { normalizeState } from "./state";
 import { DEFAULT_THEME_ID } from "./theme";
 
@@ -18,8 +18,10 @@ export function useAppState() {
       changes: { [key: string]: chrome.storage.StorageChange },
       area: string
     ) => {
-      if (area === "local" && changes[STORAGE_KEY]) {
-        setState(normalizeState(changes[STORAGE_KEY].newValue));
+      if (area === "local" && (changes[STORAGE_KEY] || changes[LEGACY_STORAGE_KEY])) {
+        const next = (changes[STORAGE_KEY]?.newValue ??
+          changes[LEGACY_STORAGE_KEY]?.newValue) as Partial<AppState> | undefined;
+        setState(normalizeState(next));
       }
     };
     chrome.storage.onChanged.addListener(listener);

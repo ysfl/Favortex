@@ -1,14 +1,29 @@
-import { classifyWithAi, summarizeWithAi } from "./shared/ai";
+import {
+  classifyAndSummarizeWithAi,
+  classifyWithAi,
+  embedTexts,
+  summarizeWithAi
+} from "./shared/ai";
 import { DEFAULT_CATEGORY_ID } from "./shared/state";
 import { loadState, updateState } from "./shared/storage";
 import type { Bookmark } from "./shared/types";
-import { domainMatches, getDomain, makeExcerpt, sanitizeText, truncateText } from "./shared/utils";
-import type { BackgroundMessage, PageTextResponse } from "./shared/messages";
+import {
+  buildEmbeddingFingerprint,
+  domainMatches,
+  getDomain,
+  makeExcerpt,
+  makeLongSummary,
+  sanitizeText,
+  truncateText
+} from "./shared/utils";
+import type { BackgroundMessage, PageMetaResponse, PageTextResponse } from "./shared/messages";
 import { fetchExaContent } from "./shared/exa";
 import { createId } from "./shared/ids";
 
 const COMMAND_CLASSIFY = "classify-page";
 const MAX_LOG_CHARS = 240;
+const MAX_FAVICON_BYTES = 48 * 1024;
+const FAVICON_BACKFILL_LIMIT = 6;
 
 const RESTRICTED_PROTOCOLS = [
   "chrome:",
@@ -18,8 +33,26 @@ const RESTRICTED_PROTOCOLS = [
   "edge-extension:"
 ];
 
+const actionApi = chrome.action ?? chrome.browserAction;
+
+async function queryTabs(queryInfo: chrome.tabs.QueryInfo) {
+  if (!chrome.tabs?.query) {
+    return [];
+  }
+  return new Promise<chrome.tabs.Tab[]>((resolve, reject) => {
+    chrome.tabs.query(queryInfo, (tabs) => {
+      const error = chrome.runtime.lastError;
+      if (error) {
+        reject(new Error(error.message));
+        return;
+      }
+      resolve(tabs);
+    });
+  });
+}
+
 async function getActiveTab() {
-  const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const tabs = await queryTabs({ active: true, currentWindow: true });
   return tabs[0] ?? null;
 }
 
@@ -51,6 +84,22 @@ function sendPageTextMessage(tabId: number): Promise<PageTextResponse> {
   });
 }
 
+function sendPageMetaMessage(tabId: number): Promise<PageMetaResponse> {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_META" }, (response) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+        return;
+      }
+      if (!response) {
+        reject(new Error("No response from content script"));
+        return;
+      }
+      resolve(response as PageMetaResponse);
+    });
+  });
+}
+
 function isNoReceiverError(error: unknown) {
   if (!(error instanceof Error)) {
     return false;
@@ -59,14 +108,27 @@ function isNoReceiverError(error: unknown) {
 }
 
 async function ensureContentScript(tabId: number) {
-  if (!chrome.scripting?.executeScript) {
-    return false;
+  if (chrome.scripting?.executeScript) {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ["content.js"]
+    });
+    return true;
   }
-  await chrome.scripting.executeScript({
-    target: { tabId },
-    files: ["content.js"]
-  });
-  return true;
+  if (chrome.tabs?.executeScript) {
+    await new Promise<void>((resolve, reject) => {
+      chrome.tabs.executeScript(tabId, { file: "content.js" }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          reject(new Error(error.message));
+          return;
+        }
+        resolve();
+      });
+    });
+    return true;
+  }
+  return false;
 }
 
 async function requestPageText(tabId: number): Promise<PageTextResponse> {
@@ -84,12 +146,34 @@ async function requestPageText(tabId: number): Promise<PageTextResponse> {
   }
 }
 
+async function requestPageMeta(tabId: number): Promise<PageMetaResponse> {
+  try {
+    return await sendPageMetaMessage(tabId);
+  } catch (error) {
+    if (!isNoReceiverError(error)) {
+      throw error;
+    }
+    const injected = await ensureContentScript(tabId);
+    if (!injected) {
+      throw error;
+    }
+    return await sendPageMetaMessage(tabId);
+  }
+}
+
 async function setBadge(tabId: number, text: string, color: string) {
-  await chrome.action.setBadgeText({ tabId, text });
-  await chrome.action.setBadgeBackgroundColor({ tabId, color });
+  if (!actionApi?.setBadgeText || !actionApi?.setBadgeBackgroundColor) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    actionApi.setBadgeText({ tabId, text }, () => resolve());
+  });
+  await new Promise<void>((resolve) => {
+    actionApi.setBadgeBackgroundColor({ tabId, color }, () => resolve());
+  });
   if (text) {
     setTimeout(() => {
-      void chrome.action.setBadgeText({ tabId, text: "" });
+      actionApi.setBadgeText({ tabId, text: "" }, () => undefined);
     }, 2200);
   }
 }
@@ -118,7 +202,9 @@ type ResolvedPage = {
   title: string;
   url: string;
   text: string;
+  icons: string[];
   source: "exa" | "page";
+  exaFallback: boolean;
 };
 
 function getPreferredLanguage() {
@@ -140,16 +226,27 @@ async function resolvePageText(
   const url = tab.url ?? "";
   const title = tab.title ?? "";
   const canUseExa = url.startsWith("http://") || url.startsWith("https://");
+  const canAttemptExa =
+    canUseExa && state.exa.enabled && Boolean(state.exa.apiKey && state.exa.baseUrl);
 
-  if (canUseExa && state.exa.enabled && state.exa.apiKey && state.exa.baseUrl) {
+  if (canAttemptExa) {
     try {
       const exaContent = await fetchExaContent(state.exa, url);
       if (exaContent?.text) {
+        let icons: string[] = [];
+        try {
+          const meta = await requestPageMeta(tabId);
+          icons = meta.icons ?? [];
+        } catch {
+          icons = [];
+        }
         return {
           title: title || exaContent.title || url,
           url,
           text: exaContent.text,
-          source: "exa"
+          icons,
+          source: "exa",
+          exaFallback: false
         };
       }
       await appendLog("info", "Exa 返回空内容，已回退本地解析。", url);
@@ -162,8 +259,103 @@ async function resolvePageText(
   const payload = await requestPageText(tabId);
   return {
     ...payload,
-    source: "page"
+    icons: payload.icons ?? [],
+    source: "page",
+    exaFallback: canAttemptExa
   };
+}
+
+function stripHtmlTags(text: string) {
+  return text.replace(/<[^>]*>/g, " ");
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function buildFaviconCandidates(url: string, icons: string[]) {
+  const unique = new Set<string>();
+  const candidates: string[] = [];
+  icons.forEach((icon) => {
+    if (icon && !unique.has(icon)) {
+      unique.add(icon);
+      candidates.push(icon);
+    }
+  });
+  try {
+    const fallback = new URL("/favicon.ico", url).toString();
+    if (!unique.has(fallback)) {
+      unique.add(fallback);
+      candidates.push(fallback);
+    }
+  } catch {
+    return candidates;
+  }
+  return candidates;
+}
+
+async function fetchFaviconData(url: string, icons: string[]) {
+  const candidates = buildFaviconCandidates(url, icons);
+  for (const iconUrl of candidates) {
+    if (iconUrl.startsWith("data:")) {
+      return iconUrl;
+    }
+    try {
+      const response = await fetch(iconUrl);
+      if (!response.ok) {
+        continue;
+      }
+      const contentType = response.headers.get("content-type") || "image/png";
+      if (!contentType.startsWith("image/")) {
+        continue;
+      }
+      const contentLength = response.headers.get("content-length");
+      if (contentLength && Number(contentLength) > MAX_FAVICON_BYTES) {
+        continue;
+      }
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > MAX_FAVICON_BYTES) {
+        continue;
+      }
+      const base64 = arrayBufferToBase64(buffer);
+      return `data:${contentType};base64,${base64}`;
+    } catch {
+      continue;
+    }
+  }
+  return "";
+}
+
+async function backfillFavicons() {
+  const state = await loadState();
+  const missing = state.bookmarks.filter((bookmark) => !bookmark.favicon);
+  if (!missing.length) {
+    return;
+  }
+  const updates: Record<string, string> = {};
+  for (const bookmark of missing.slice(0, FAVICON_BACKFILL_LIMIT)) {
+    const favicon = await fetchFaviconData(bookmark.url, []);
+    if (favicon) {
+      updates[bookmark.id] = favicon;
+    }
+  }
+  if (!Object.keys(updates).length) {
+    return;
+  }
+  await updateState((current) => ({
+    ...current,
+    bookmarks: current.bookmarks.map((bookmark) =>
+      updates[bookmark.id]
+        ? { ...bookmark, favicon: updates[bookmark.id] }
+        : bookmark
+    )
+  }));
 }
 
 async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
@@ -184,15 +376,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
     const payload = await resolvePageText(tab, state);
     const title = payload.title || payload.url;
     const text = sanitizeText(payload.text);
-    let summary = "";
-    if (payload.source === "exa" && state.ai.apiKey && state.ai.baseUrl && state.ai.model) {
-      try {
-        summary = await summarizeWithAi(state.ai, payload.text, getPreferredLanguage());
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "AI 概括失败";
-        await appendLog("error", `AI 概括失败：${message}`, payload.url);
-      }
-    }
+    const textForAi = payload.exaFallback ? sanitizeText(stripHtmlTags(payload.text)) : text;
 
     const domain = getDomain(payload.url);
     const matchedRule = state.rules
@@ -200,10 +384,53 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
       .sort((a, b) => b.domain.length - a.domain.length)[0];
 
     let categoryId = matchedRule?.categoryId ?? DEFAULT_CATEGORY_ID;
+    let summaryShort = "";
+    let summaryLong = "";
+    const canUseAi = state.ai.apiKey && state.ai.baseUrl && state.ai.model;
+    const shouldSummarize = (payload.source === "exa" || payload.exaFallback) && canUseAi;
+    let classified = Boolean(matchedRule);
 
-    if (!matchedRule) {
+    if (!matchedRule && shouldSummarize) {
       await setBadge(tabId, "UN", "#0f766e");
-      const result = await classifyWithAi(state.ai, state.categories, title, payload.url, text);
+      try {
+        const combined = await classifyAndSummarizeWithAi(
+          state.ai,
+          state.categories,
+          title,
+          payload.url,
+          textForAi,
+          getPreferredLanguage()
+        );
+        categoryId = combined.categoryId;
+        summaryShort = combined.summaryShort;
+        summaryLong = combined.summaryLong;
+        classified = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "AI 分类与概括失败";
+        await appendLog("error", `AI 分类与概括失败：${message}`, payload.url);
+      }
+    }
+
+    if (shouldSummarize && !summaryShort) {
+      try {
+        const summary = await summarizeWithAi(state.ai, textForAi, getPreferredLanguage());
+        summaryShort = summary.summaryShort;
+        summaryLong = summary.summaryLong;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "AI 概括失败";
+        await appendLog("error", `AI 概括失败：${message}`, payload.url);
+      }
+    }
+
+    if (!matchedRule && !classified) {
+      await setBadge(tabId, "UN", "#0f766e");
+      const result = await classifyWithAi(
+        state.ai,
+        state.categories,
+        title,
+        payload.url,
+        textForAi
+      );
       categoryId = result.categoryId;
     }
 
@@ -211,15 +438,45 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
       ? categoryId
       : DEFAULT_CATEGORY_ID;
 
+    const existingBookmark = state.bookmarks.find((item) => item.url === payload.url);
+    const resolvedFavicon =
+      existingBookmark?.favicon || (await fetchFaviconData(payload.url, payload.icons));
+    const resolvedSummaryShort = summaryShort || makeExcerpt(text);
+    const resolvedSummaryLong = summaryLong || summaryShort || makeLongSummary(text);
+
+    let embedding: number[] | undefined;
+    const embeddingConfig = state.search.embedding;
+    const canEmbed =
+      embeddingConfig.baseUrl && embeddingConfig.apiKey && embeddingConfig.model;
+    const embeddingFingerprint = canEmbed
+      ? buildEmbeddingFingerprint(embeddingConfig)
+      : "";
+    if (canEmbed) {
+      const embeddingText = sanitizeText(
+        [title, resolvedSummaryLong, payload.url].filter(Boolean).join(" · ")
+      );
+      try {
+        const vectors = await embedTexts(embeddingConfig, [embeddingText]);
+        embedding = vectors[0];
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Embedding 失败";
+        await appendLog("error", `Embedding 失败：${message}`, payload.url);
+      }
+    }
+
     await updateState((current) => {
       const existing = current.bookmarks.find((item) => item.url === payload.url);
-      const excerpt = summary || makeExcerpt(text);
+      const excerpt = resolvedSummaryShort;
 
       if (existing) {
         const updated: Bookmark = {
           ...existing,
           title,
           excerpt,
+          summaryLong: resolvedSummaryLong,
+          embedding: embedding ?? existing.embedding,
+          embeddingFingerprint: embedding ? embeddingFingerprint : existing.embeddingFingerprint,
+          favicon: existing.favicon || resolvedFavicon,
           categoryId: resolvedCategoryId,
           createdAt: Date.now()
         };
@@ -234,6 +491,10 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         url: payload.url,
         title,
         excerpt,
+        summaryLong: resolvedSummaryLong,
+        embedding,
+        embeddingFingerprint: embedding ? embeddingFingerprint : undefined,
+        favicon: resolvedFavicon || undefined,
         categoryId: resolvedCategoryId,
         pinned: false,
         createdAt: Date.now()
@@ -275,3 +536,9 @@ chrome.runtime.onInstalled.addListener((details) => {
     void chrome.tabs.create({ url });
   }
 });
+
+chrome.runtime.onStartup.addListener(() => {
+  void backfillFavicons();
+});
+
+void backfillFavicons();

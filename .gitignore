@@ -1,6 +1,14 @@
 node_modules/
 dist/
+dist-firefox/
+dist-debug/
+dist-debug-firefox/
 .vite/
+artifacts/
+.keys/
+*.crx
+*.xpi
+*.zip
 *.log
 .DS_Store
 .env*

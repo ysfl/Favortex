@@ -37,9 +37,9 @@ export default function App() {
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="space-y-3">
               <span className="chip">Welcome</span>
-              <h1 className="text-3xl font-semibold text-slate-900">欢迎使用 AutoFav</h1>
+              <h1 className="text-3xl font-semibold text-slate-900">欢迎使用 Favortex</h1>
               <p className="max-w-xl text-base text-slate-600">
-                AutoFav 帮你把网页内容自动归类，告别手动整理收藏夹的烦恼。
+                Favortex 帮你把网页内容自动归类，告别手动整理收藏夹的烦恼。
               </p>
             </div>
             <div className="flex flex-col gap-3">

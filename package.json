@@ -1,11 +1,15 @@
 {
-  "name": "auto-fav",
+  "name": "favortex",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:debug": "vite build --mode debug",
+    "build:debug:firefox": "npm run build:debug && node scripts/prepare-firefox.cjs artifacts/dist-debug artifacts/dist-debug-firefox",
+    "build:ext": "npm run build && node scripts/package.cjs",
+    "package": "node scripts/package.cjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview --port 4173"
   },
@@ -16,19 +20,23 @@
     "@radix-ui/react-select": "^2.1.2",
     "@radix-ui/react-tabs": "^1.1.1",
     "@radix-ui/react-tooltip": "^1.1.2",
+    "@tailwindcss/postcss": "^4.1.18",
     "clsx": "^2.1.1",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
   },
   "devDependencies": {
-    "@types/chrome": "^0.0.272",
-    "@types/react": "^18.3.4",
-    "@types/react-dom": "^18.3.0",
-    "@vitejs/plugin-react": "^4.3.2",
+    "@types/chrome": "^0.1.36",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.20",
+    "crx3": "^2.0.0",
     "postcss": "^8.4.47",
-    "tailwindcss": "^3.4.13",
+    "tailwindcss": "^4.1.18",
     "typescript": "^5.6.3",
-    "vite": "^5.4.8"
+    "vite": "^7.3.1",
+    "web-ext": "^9.2.0",
+    "yazl": "^3.3.1"
   }
 }

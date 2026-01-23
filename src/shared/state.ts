@@ -43,7 +43,8 @@ export const DEFAULT_STATE: AppState = {
       baseUrl: "https://api.openai.com/v1",
       apiKey: "",
       model: ""
-    }
+    },
+    minScore: 0.2
   }
 };
 
@@ -93,6 +94,7 @@ export function normalizeState(value?: Partial<AppState>): AppState {
       : {};
   const rawRerank: Partial<SearchConfig["rerank"]> =
     typeof rawSearch.rerank === "object" && rawSearch.rerank ? rawSearch.rerank : {};
+  const rawMinScore = typeof rawSearch.minScore === "number" ? rawSearch.minScore : undefined;
 
   const embedding: SearchConfig["embedding"] = {
     provider: isSearchProvider(rawEmbedding.provider)
@@ -157,11 +159,30 @@ export function normalizeState(value?: Partial<AppState>): AppState {
     ...rule,
     categoryId: categoryIds.has(rule.categoryId) ? rule.categoryId : DEFAULT_CATEGORY_ID
   }));
-  const normalizedBookmarks = bookmarks.map((bookmark) => ({
-    ...bookmark,
-    pinned: bookmark.pinned ?? false,
-    categoryId: categoryIds.has(bookmark.categoryId) ? bookmark.categoryId : DEFAULT_CATEGORY_ID
-  }));
+  const normalizedBookmarks = bookmarks.map((bookmark) => {
+    const excerpt = typeof bookmark.excerpt === "string" ? bookmark.excerpt : "";
+    const summaryLongRaw = (bookmark as { summaryLong?: unknown }).summaryLong;
+    const summaryLong = typeof summaryLongRaw === "string" ? summaryLongRaw : excerpt;
+    const rawEmbedding = (bookmark as { embedding?: unknown }).embedding;
+    const embedding =
+      Array.isArray(rawEmbedding) && rawEmbedding.every((value) => typeof value === "number")
+        ? rawEmbedding
+        : undefined;
+    const rawFingerprint = (bookmark as { embeddingFingerprint?: unknown }).embeddingFingerprint;
+    const embeddingFingerprint =
+      typeof rawFingerprint === "string" && rawFingerprint.trim()
+        ? rawFingerprint
+        : undefined;
+    return {
+      ...bookmark,
+      excerpt,
+      summaryLong,
+      embedding,
+      embeddingFingerprint,
+      pinned: bookmark.pinned ?? false,
+      categoryId: categoryIds.has(bookmark.categoryId) ? bookmark.categoryId : DEFAULT_CATEGORY_ID
+    };
+  });
 
   return {
     categories: mergedCategories,
@@ -174,7 +195,11 @@ export function normalizeState(value?: Partial<AppState>): AppState {
     ui,
     search: {
       embedding,
-      rerank
+      rerank,
+      minScore:
+        typeof rawMinScore === "number" && Number.isFinite(rawMinScore)
+          ? Math.min(Math.max(rawMinScore, 0), 1)
+          : DEFAULT_STATE.search.minScore
     }
   };
 }

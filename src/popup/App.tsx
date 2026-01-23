@@ -12,7 +12,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../shared/hooks";
 import { DEFAULT_CATEGORY_ID } from "../shared/state";
-import { getDomain, getFaviconUrl, truncateText } from "../shared/utils";
+import { getDomain, truncateText } from "../shared/utils";
 import { createId } from "../shared/ids";
 
 const SHORTCUT_HINT = "Ctrl+Shift+Y";
@@ -233,7 +233,7 @@ export default function App() {
         <header className="flex items-start justify-between gap-4">
           <div>
             <span className="chip">Smart Favorites</span>
-            <h1 className="mt-2 text-xl font-semibold">AutoFav</h1>
+            <h1 className="mt-2 text-xl font-semibold">Favortex</h1>
             <p className="mt-1 text-xs text-slate-600">
               快捷键 {SHORTCUT_HINT} 一键收藏
             </p>
@@ -354,7 +354,7 @@ export default function App() {
                       </div>
                     ) : (
                       category.items.slice(0, 6).map((item) => {
-                        const favicon = getFaviconUrl(item.url) || fallbackIcon;
+                        const favicon = item.favicon || fallbackIcon;
                         if (compactMode) {
                           return (
                             <div

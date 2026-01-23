@@ -1,8 +1,18 @@
+import type { SearchProviderConfig } from "./types";
+
 export function sanitizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 export function makeExcerpt(text: string, maxLength = 240): string {
+  const cleaned = sanitizeText(text);
+  if (cleaned.length <= maxLength) {
+    return cleaned;
+  }
+  return `${cleaned.slice(0, maxLength).trim()}...`;
+}
+
+export function makeLongSummary(text: string, maxLength = 600): string {
   const cleaned = sanitizeText(text);
   if (cleaned.length <= maxLength) {
     return cleaned;
@@ -26,13 +36,14 @@ export function getDomain(url: string): string {
 }
 
 export function getFaviconUrl(url: string): string {
-  const domain = getDomain(url);
-  if (!domain) {
+  if (!url) {
     return "";
   }
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(
-    domain
-  )}&sz=32`;
+  if (typeof chrome !== "undefined" && chrome.runtime?.getURL) {
+    const base = chrome.runtime.getURL("_favicon/");
+    return `${base}?pageUrl=${encodeURIComponent(url)}&size=32`;
+  }
+  return `chrome://favicon2/?size=32&scale=1&url=${encodeURIComponent(url)}`;
 }
 
 export function domainMatches(ruleDomain: string, urlDomain: string): boolean {
@@ -41,4 +52,10 @@ export function domainMatches(ruleDomain: string, urlDomain: string): boolean {
     return false;
   }
   return urlDomain === rule || urlDomain.endsWith(`.${rule}`);
+}
+
+export function buildEmbeddingFingerprint(config: SearchProviderConfig) {
+  const baseUrl = config.baseUrl.trim().toLowerCase();
+  const model = config.model.trim();
+  return `${config.provider}|${baseUrl}|${model}`;
 }

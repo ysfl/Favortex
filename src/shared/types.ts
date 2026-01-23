@@ -29,6 +29,7 @@ export type SearchProviderConfig = {
 export type SearchConfig = {
   embedding: SearchProviderConfig;
   rerank: SearchProviderConfig & { enabled: boolean };
+  minScore: number;
 };
 
 export type Category = {
@@ -50,6 +51,10 @@ export type Bookmark = {
   url: string;
   title: string;
   excerpt: string;
+  summaryLong: string;
+  embedding?: number[];
+  embeddingFingerprint?: string;
+  favicon?: string;
   categoryId: string;
   pinned: boolean;
   createdAt: number;

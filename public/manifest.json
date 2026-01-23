@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "AutoFav 智能收藏夹",
-  "short_name": "AutoFav",
-  "version": "0.1.0",
+  "name": "Favortex 智能收藏夹",
+  "short_name": "Favortex",
+  "version": "1.0.0",
   "description": "自动读取网页内容并使用 AI 分类的智能收藏夹。",
   "action": {
-    "default_title": "AutoFav 智能收藏夹",
+    "default_title": "Favortex 智能收藏夹",
     "default_popup": "popup/index.html"
   },
   "options_page": "options/index.html",
@@ -13,7 +13,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "tabs", "scripting"],
+  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"],
   "commands": {
     "classify-page": {
@@ -39,5 +39,11 @@
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "favortex@local",
+      "strict_min_version": "109.0"
+    }
   }
 }
