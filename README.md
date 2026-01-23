@@ -1,6 +1,6 @@
-<p align="center"><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
-
 # Favortex
+
+> [English](README.md) | [简体中文](README.zh-CN.md)
 
 Favortex is an AI-powered smart bookmark manager that auto-classifies, summarizes, and searches your saved web pages across Chrome, Edge, and Firefox.
 

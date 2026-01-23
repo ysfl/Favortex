@@ -1,6 +1,6 @@
-<p align="center"><a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a></p>
-
 # Favortex
+
+> [English](README.md) | [简体中文](README.zh-CN.md)
 
 Favortex 是一款 AI 驱动的智能收藏夹，自动分类、摘要并支持搜索你的网页收藏，支持 Chrome、Edge 与 Firefox。
 
