@@ -3,6 +3,7 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { answerWithAi, embedTexts, rerankTexts } from "../shared/ai";
 import { useAppState } from "../shared/hooks";
+import { renderMarkdown } from "../shared/markdown";
 import type { Bookmark } from "../shared/types";
 import { buildEmbeddingFingerprint, getDomain, sanitizeText, truncateText } from "../shared/utils";
 import { getLanguageTag, useI18n } from "../shared/i18n";
@@ -15,6 +16,14 @@ const EMBEDDING_BATCH_SIZE = 20;
 
 type SearchMode = "classic" | "ai";
 type ChatMessage = { role: "user" | "assistant"; content: string };
+
+function MarkdownContent({ content }: { content: string }) {
+  const html = useMemo(() => renderMarkdown(content), [content]);
+  if (!html) {
+    return null;
+  }
+  return <div className="markdown-body" dangerouslySetInnerHTML={{ __html: html }} />;
+}
 
 function cosineSimilarity(a: number[], b: number[]) {
   let dot = 0;
@@ -545,7 +554,11 @@ export default function App() {
                           : "bg-white text-slate-700"
                       )}
                     >
-                      {message.content}
+                      {message.role === "assistant" ? (
+                        <MarkdownContent content={message.content} />
+                      ) : (
+                        message.content
+                      )}
                     </div>
                   ))
                 ) : (
