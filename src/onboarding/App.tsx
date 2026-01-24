@@ -1,10 +1,15 @@
 import { ArrowTopRightIcon, CheckIcon, RocketIcon } from "@radix-ui/react-icons";
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useAppState } from "../shared/hooks";
-import { useI18n } from "../shared/i18n";
+import { getLanguageTag, useI18n } from "../shared/i18n";
 
 export default function App() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+
+  useEffect(() => {
+    document.documentElement.lang = getLanguageTag(locale);
+    document.title = t("欢迎使用 Favortex", "Welcome to Favortex");
+  }, [locale, t]);
   useAppState();
   const steps = useMemo(
     () => [

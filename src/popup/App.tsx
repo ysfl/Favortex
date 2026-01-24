@@ -14,7 +14,7 @@ import { useAppState } from "../shared/hooks";
 import { DEFAULT_CATEGORY_ID } from "../shared/state";
 import { getDomain, truncateText } from "../shared/utils";
 import { createId } from "../shared/ids";
-import { useI18n } from "../shared/i18n";
+import { getLanguageTag, useI18n } from "../shared/i18n";
 
 const SHORTCUT_HINT = "Ctrl+Shift+Y";
 type SortMode = "recent";
@@ -41,6 +41,11 @@ export default function App() {
       }),
     [locale]
   );
+
+  useEffect(() => {
+    document.documentElement.lang = getLanguageTag(locale);
+    document.title = t("Favortex 智能收藏夹", "Favortex Smart Favorites");
+  }, [locale, t]);
   useEffect(() => {
     return () => {
       if (statusTimerRef.current !== null) {

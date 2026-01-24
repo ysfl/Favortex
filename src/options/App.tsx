@@ -32,7 +32,7 @@ import type {
 } from "../shared/types";
 import { buildEmbeddingFingerprint, getDomain } from "../shared/utils";
 import { createId } from "../shared/ids";
-import { useI18n } from "../shared/i18n";
+import { getLanguageTag, useI18n } from "../shared/i18n";
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -163,6 +163,11 @@ export default function App() {
   const aiImportInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
   const deferredBookmarkQuery = useDeferredValue(bookmarkQuery);
+
+  useEffect(() => {
+    document.documentElement.lang = getLanguageTag(locale);
+    document.title = t("Favortex 设置中心", "Favortex Settings");
+  }, [locale, t]);
 
   useEffect(() => {
     if (state) {

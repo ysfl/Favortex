@@ -5,7 +5,7 @@ import { answerWithAi, embedTexts, rerankTexts } from "../shared/ai";
 import { useAppState } from "../shared/hooks";
 import type { Bookmark } from "../shared/types";
 import { buildEmbeddingFingerprint, getDomain, sanitizeText, truncateText } from "../shared/utils";
-import { useI18n } from "../shared/i18n";
+import { getLanguageTag, useI18n } from "../shared/i18n";
 
 const AI_SEARCH_TOP_K = 40;
 const AI_DOC_MAX_CHARS = 800;
@@ -62,6 +62,11 @@ export default function App() {
   const statusTimerRef = useRef<number | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const fallbackIcon = useMemo(() => chrome.runtime.getURL("icons/icon-16.png"), []);
+
+  useEffect(() => {
+    document.documentElement.lang = getLanguageTag(locale);
+    document.title = t("Favortex 搜索", "Favortex Search");
+  }, [locale, t]);
 
   useEffect(() => {
     inputRef.current?.focus();

@@ -1,6 +1,6 @@
 {
   "extension_name": {
-    "message": "Favortex 智能收藏夹"
+    "message": "Favortex"
   },
   "extension_short_name": {
     "message": "Favortex"
@@ -9,7 +9,7 @@
     "message": "自动读取网页内容并使用 AI 分类的智能收藏夹。"
   },
   "extension_action_title": {
-    "message": "Favortex 智能收藏夹"
+    "message": "Favortex"
   },
   "extension_command_classify": {
     "message": "智能分类当前页面"

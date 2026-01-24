@@ -20,6 +20,10 @@ export function getLocale(): LocaleCode {
   return normalizeLocale(raw);
 }
 
+export function getLanguageTag(locale: LocaleCode): string {
+  return locale === "zh" ? "zh-CN" : "en";
+}
+
 function formatMessage(
   message: string,
   vars?: Record<string, string | number>
