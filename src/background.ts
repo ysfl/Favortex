@@ -14,7 +14,8 @@ import {
   makeExcerpt,
   makeLongSummary,
   sanitizeText,
-  truncateText
+  truncateText,
+  urlPrefixMatches
 } from "./shared/utils";
 import type { BackgroundMessage, PageMetaResponse, PageTextResponse } from "./shared/messages";
 import { fetchExaContent } from "./shared/exa";
@@ -418,8 +419,16 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
 
     const domain = getDomain(payload.url);
     const matchedRule = state.rules
-      .filter((rule) => domainMatches(rule.domain, domain))
-      .sort((a, b) => b.domain.length - a.domain.length)[0];
+      .filter((rule) => {
+        if (rule.type === "domain") {
+          return domainMatches(rule.value, domain);
+        }
+        if (rule.type === "urlPrefix") {
+          return urlPrefixMatches(rule.value, payload.url);
+        }
+        return false;
+      })
+      .sort((a, b) => b.value.length - a.value.length)[0];
 
     let categoryId = matchedRule?.categoryId ?? DEFAULT_CATEGORY_ID;
     let summaryShort = "";
@@ -434,6 +443,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         const combined = await classifyAndSummarizeWithAi(
           state.ai,
           state.categories,
+          state.rules,
           title,
           payload.url,
           textForAi,
@@ -479,6 +489,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
       const result = await classifyWithAi(
         state.ai,
         state.categories,
+        state.rules,
         title,
         payload.url,
         textForAi

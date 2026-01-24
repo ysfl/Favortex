@@ -1,4 +1,4 @@
-import type { AiConfig, Category, SearchProviderConfig } from "./types";
+import type { AiConfig, Category, Rule, SearchProviderConfig } from "./types";
 import { DEFAULT_CATEGORY_ID } from "./state";
 import { buildUrl } from "./api";
 import { sanitizeText, truncateText } from "./utils";
@@ -8,11 +8,36 @@ const MAX_SUMMARY_CHARS = 4000;
 const SHORT_SUMMARY_LIMIT = 180;
 const LONG_SUMMARY_LIMIT = 600;
 
-function buildPrompt(categories: Category[], title: string, url: string, text: string) {
-  const trimmed = sanitizeText(text).slice(0, MAX_CHARS);
-  const list = categories
-    .map((category) => `- ${category.id}: ${category.name}`)
+function buildCategoryList(categories: Category[], rules: Rule[]) {
+  const naturalByCategory = new Map<string, string[]>();
+  rules
+    .filter((rule) => rule.type === "natural")
+    .forEach((rule) => {
+      const existing = naturalByCategory.get(rule.categoryId) ?? [];
+      existing.push(truncateText(rule.value, 160));
+      naturalByCategory.set(rule.categoryId, existing);
+    });
+
+  return categories
+    .map((category) => {
+      const hints = naturalByCategory.get(category.id);
+      if (!hints || hints.length === 0) {
+        return `- ${category.id}: ${category.name}`;
+      }
+      return `- ${category.id}: ${category.name} (hints: ${hints.join("; ")})`;
+    })
     .join("\n");
+}
+
+function buildPrompt(
+  categories: Category[],
+  rules: Rule[],
+  title: string,
+  url: string,
+  text: string
+) {
+  const trimmed = sanitizeText(text).slice(0, MAX_CHARS);
+  const list = buildCategoryList(categories, rules);
 
   const system =
     "You are a precise bookmark classifier. Choose the single best category id from the list. Respond with ONLY JSON: {\"categoryId\": \"...\"}. If unsure, use \"inbox\".";
@@ -96,15 +121,14 @@ function buildSummaryPrompt(text: string, language: string) {
 
 function buildCombinedPrompt(
   categories: Category[],
+  rules: Rule[],
   title: string,
   url: string,
   text: string,
   language: string
 ) {
   const trimmed = sanitizeText(text).slice(0, MAX_SUMMARY_CHARS);
-  const list = categories
-    .map((category) => `- ${category.id}: ${category.name}`)
-    .join("\n");
+  const list = buildCategoryList(categories, rules);
 
   const system =
     `You are a precise bookmark classifier and summarizer. ` +
@@ -317,6 +341,7 @@ async function fetchResponsesText(config: AiConfig, system: string, user: string
 export async function classifyWithAi(
   config: AiConfig,
   categories: Category[],
+  rules: Rule[],
   title: string,
   url: string,
   text: string
@@ -325,7 +350,7 @@ export async function classifyWithAi(
     throw new Error("AI settings are incomplete");
   }
 
-  const { system, user } = buildPrompt(categories, title, url, text);
+  const { system, user } = buildPrompt(categories, rules, title, url, text);
   let responseText = "";
 
   if (config.type === "openai") {
@@ -364,6 +389,7 @@ export async function classifyWithAi(
 export async function classifyAndSummarizeWithAi(
   config: AiConfig,
   categories: Category[],
+  rules: Rule[],
   title: string,
   url: string,
   text: string,
@@ -373,7 +399,7 @@ export async function classifyAndSummarizeWithAi(
     throw new Error("AI settings are incomplete");
   }
 
-  const { system, user } = buildCombinedPrompt(categories, title, url, text, language);
+  const { system, user } = buildCombinedPrompt(categories, rules, title, url, text, language);
   let responseText = "";
 
   if (config.type === "openai") {

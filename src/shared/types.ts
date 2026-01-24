@@ -41,7 +41,8 @@ export type Category = {
 
 export type Rule = {
   id: string;
-  domain: string;
+  type: "domain" | "urlPrefix" | "natural";
+  value: string;
   categoryId: string;
   createdAt: number;
 };

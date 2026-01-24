@@ -54,6 +54,20 @@ export function domainMatches(ruleDomain: string, urlDomain: string): boolean {
   return urlDomain === rule || urlDomain.endsWith(`.${rule}`);
 }
 
+export function urlPrefixMatches(rulePrefix: string, url: string): boolean {
+  const prefix = rulePrefix.trim();
+  if (!prefix || !url) {
+    return false;
+  }
+  const normalizedPrefix = prefix.toLowerCase();
+  const normalizedUrl = url.toLowerCase();
+  if (normalizedUrl.startsWith(normalizedPrefix)) {
+    return true;
+  }
+  const withoutScheme = normalizedUrl.replace(/^[a-z]+:\/\//, "");
+  return withoutScheme.startsWith(normalizedPrefix);
+}
+
 export function buildEmbeddingFingerprint(config: SearchProviderConfig) {
   const baseUrl = config.baseUrl.trim().toLowerCase();
   const model = config.model.trim();

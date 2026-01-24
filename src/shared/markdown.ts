@@ -12,9 +12,7 @@ purifier.addHook("afterSanitizeAttributes", (node) => {
 
 marked.setOptions({
   gfm: true,
-  breaks: true,
-  headerIds: false,
-  mangle: false
+  breaks: true
 });
 
 export function renderMarkdown(source: string): string {
