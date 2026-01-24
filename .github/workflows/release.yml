@@ -29,20 +29,8 @@ jobs:
         with:
           name: favortex-packages
           path: artifacts/*
-      - name: Generate v1.0.0 release notes
-        if: github.ref == 'refs/tags/v1.0.0'
-        run: node scripts/generate-release-notes.cjs
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-      - name: Publish Release (v1.0.0)
-        if: github.ref == 'refs/tags/v1.0.0'
-        uses: softprops/action-gh-release@v2
-        with:
-          body_path: release-notes.md
-          files: artifacts/*
       - name: Publish Release
-        if: startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/tags/v1.0.0'
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true

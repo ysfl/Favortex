@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Favortex 智能收藏夹",
-  "short_name": "Favortex",
+  "name": "__MSG_extension_name__",
+  "short_name": "__MSG_extension_short_name__",
   "version": "1.0.0",
-  "description": "自动读取网页内容并使用 AI 分类的智能收藏夹。",
+  "description": "__MSG_extension_description__",
+  "default_locale": "zh_CN",
   "action": {
-    "default_title": "Favortex 智能收藏夹",
+    "default_title": "__MSG_extension_action_title__",
     "default_popup": "popup/index.html"
   },
   "options_page": "options/index.html",
@@ -21,7 +22,7 @@
         "default": "Ctrl+Shift+Y",
         "mac": "Command+Shift+Y"
       },
-      "description": "智能分类当前页面"
+      "description": "__MSG_extension_command_classify__"
     }
   },
   "content_scripts": [

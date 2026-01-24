@@ -1,0 +1,17 @@
+{
+  "extension_name": {
+    "message": "Favortex Smart Bookmarks"
+  },
+  "extension_short_name": {
+    "message": "Favortex"
+  },
+  "extension_description": {
+    "message": "AI-powered smart bookmarks that auto-classify, summarize, and search your web saves."
+  },
+  "extension_action_title": {
+    "message": "Favortex Smart Bookmarks"
+  },
+  "extension_command_classify": {
+    "message": "Smart classify current page"
+  }
+}

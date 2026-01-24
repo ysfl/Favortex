@@ -20,7 +20,23 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
-function convertManifest(manifestPath) {
+function writeBackgroundPage(outDir, scriptName) {
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Favortex Background</title>
+  </head>
+  <body>
+    <script type="module" src="${scriptName}"></script>
+  </body>
+</html>
+`;
+  fs.writeFileSync(path.join(outDir, "background.html"), html);
+}
+
+function convertManifest(manifestPath, outDir) {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
   const mv3Action = manifest.action;
   if (mv3Action) {
@@ -28,10 +44,12 @@ function convertManifest(manifestPath) {
     delete manifest.action;
   }
   if (manifest.background && typeof manifest.background === "object") {
+    const serviceWorker = manifest.background.service_worker;
     delete manifest.background.type;
-    if (manifest.background.service_worker) {
+    if (serviceWorker) {
+      writeBackgroundPage(outDir, serviceWorker);
       manifest.background = {
-        scripts: [manifest.background.service_worker],
+        page: "background.html",
         persistent: false
       };
     }
@@ -65,7 +83,7 @@ function main() {
   }
   ensureDir(outDir);
   fs.cpSync(srcDir, outDir, { recursive: true });
-  convertManifest(path.join(outDir, "manifest.json"));
+  convertManifest(path.join(outDir, "manifest.json"), outDir);
   console.log(`Firefox-ready build: ${outDir}`);
 }
 

@@ -1,25 +1,44 @@
 import { ArrowTopRightIcon, CheckIcon, RocketIcon } from "@radix-ui/react-icons";
-
-const steps = [
-  {
-    title: "创建分类",
-    description: "在设置页新增如 科学技术、视频、资讯 等分类。"
-  },
-  {
-    title: "添加规则",
-    description: "常见域名可提前绑定分类，例如 linux.do -> LDO 收藏夹。"
-  },
-  {
-    title: "配置 AI",
-    description: "填写 API 类型、Base URL、Key 与模型名称。"
-  },
-  {
-    title: "开始使用",
-    description: "在任意页面按快捷键即可自动分类收藏。"
-  }
-];
+import { useMemo } from "react";
+import { useAppState } from "../shared/hooks";
+import { useI18n } from "../shared/i18n";
 
 export default function App() {
+  const { t } = useI18n();
+  useAppState();
+  const steps = useMemo(
+    () => [
+      {
+        title: t("创建分类", "Create categories"),
+        description: t(
+          "在设置页新增如 科学技术、视频、资讯 等分类。",
+          "Add categories like Tech, Video, and News in Settings."
+        )
+      },
+      {
+        title: t("添加规则", "Add rules"),
+        description: t(
+          "常见域名可提前绑定分类，例如 linux.do -> LDO 收藏夹。",
+          "Bind common domains to categories, e.g. linux.do -> LDO."
+        )
+      },
+      {
+        title: t("配置 AI", "Configure AI"),
+        description: t(
+          "填写 API 类型、Base URL、Key 与模型名称。",
+          "Fill in provider, Base URL, API key, and model name."
+        )
+      },
+      {
+        title: t("开始使用", "Start using"),
+        description: t(
+          "在任意页面按快捷键即可自动分类收藏。",
+          "Press the shortcut on any page to save and classify."
+        )
+      }
+    ],
+    [t]
+  );
   const openOptions = () => {
     chrome.runtime.openOptionsPage();
   };
@@ -36,10 +55,15 @@ export default function App() {
         <header className="glass-card animate-float rounded-[36px] px-8 py-10">
           <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
             <div className="space-y-3">
-              <span className="chip">Welcome</span>
-              <h1 className="text-3xl font-semibold text-slate-900">欢迎使用 Favortex</h1>
+              <span className="chip">{t("欢迎", "Welcome")}</span>
+              <h1 className="text-3xl font-semibold text-slate-900">
+                {t("欢迎使用 Favortex", "Welcome to Favortex")}
+              </h1>
               <p className="max-w-xl text-base text-slate-600">
-                Favortex 帮你把网页内容自动归类，告别手动整理收藏夹的烦恼。
+                {t(
+                  "Favortex 帮你把网页内容自动归类，告别手动整理收藏夹的烦恼。",
+                  "Favortex auto-classifies your web saves so you can stop organizing manually."
+                )}
               </p>
             </div>
             <div className="flex flex-col gap-3">
@@ -48,7 +72,7 @@ export default function App() {
                 onClick={openOptions}
                 className="gradient-button inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-semibold"
               >
-                立即配置
+                {t("立即配置", "Configure now")}
                 <ArrowTopRightIcon />
               </button>
               <button
@@ -56,7 +80,7 @@ export default function App() {
                 onClick={openShortcuts}
                 className="outline-button inline-flex items-center justify-center gap-2 rounded-full px-5 py-2 text-sm font-semibold"
               >
-                设置快捷键
+                {t("设置快捷键", "Set shortcuts")}
                 <ArrowTopRightIcon />
               </button>
             </div>
@@ -72,7 +96,7 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                    Step {index + 1}
+                    {t("步骤 {index}", "Step {index}", { index: index + 1 })}
                   </div>
                   <h3 className="mt-2 text-xl font-semibold text-slate-900">
                     {step.title}
@@ -88,16 +112,27 @@ export default function App() {
         </section>
 
         <section className="glass-card rounded-[30px] px-6 py-6">
-          <h2 className="text-lg font-semibold text-slate-900">使用小贴士</h2>
+          <h2 className="text-lg font-semibold text-slate-900">
+            {t("使用小贴士", "Tips")}
+          </h2>
           <div className="mt-3 grid gap-3 md:grid-cols-3">
             <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm text-slate-600">
-              推荐先设置 3-5 个常用分类，AI 判断更稳定。
+              {t(
+                "推荐先设置 3-5 个常用分类，AI 判断更稳定。",
+                "Start with 3-5 common categories for more stable AI results."
+              )}
             </div>
             <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm text-slate-600">
-              规则优先级高于 AI，适合固定站点归档。
+              {t(
+                "规则优先级高于 AI，适合固定站点归档。",
+                "Rules override AI, perfect for recurring domains."
+              )}
             </div>
             <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-3 text-sm text-slate-600">
-              收藏后可在弹窗快速搜索与打开链接。
+              {t(
+                "收藏后可在弹窗快速搜索与打开链接。",
+                "Use the popup to quickly search and open saved links."
+              )}
             </div>
           </div>
         </section>

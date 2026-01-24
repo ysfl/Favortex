@@ -1,11 +1,11 @@
 export type ThemeId = "ocean" | "sage" | "sunset" | "slate" | "rose";
 
-export const THEMES: { id: ThemeId; label: string }[] = [
-  { id: "ocean", label: "海雾蓝" },
-  { id: "sage", label: "鼠尾草" },
-  { id: "sunset", label: "暖日橙" },
-  { id: "slate", label: "雾灰蓝" },
-  { id: "rose", label: "柔粉调" }
+export const THEMES: { id: ThemeId; label: { zh: string; en: string } }[] = [
+  { id: "ocean", label: { zh: "海雾蓝", en: "Ocean Mist" } },
+  { id: "sage", label: { zh: "鼠尾草", en: "Sage" } },
+  { id: "sunset", label: { zh: "暖日橙", en: "Sunset" } },
+  { id: "slate", label: { zh: "雾灰蓝", en: "Slate" } },
+  { id: "rose", label: { zh: "柔粉调", en: "Rose" } }
 ];
 
 export const DEFAULT_THEME_ID: ThemeId = "ocean";

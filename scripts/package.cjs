@@ -26,6 +26,22 @@ function writeJson(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
 }
 
+function writeBackgroundPage(outDir, scriptName) {
+  const html = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Favortex Background</title>
+  </head>
+  <body>
+    <script type="module" src="${scriptName}"></script>
+  </body>
+</html>
+`;
+  fs.writeFileSync(path.join(outDir, "background.html"), html);
+}
+
 function walk(dirPath, acc = []) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
   entries.forEach((entry) => {
@@ -94,10 +110,12 @@ function prepareFirefoxDist() {
     delete manifest.action;
   }
   if (manifest.background && typeof manifest.background === "object") {
+    const serviceWorker = manifest.background.service_worker;
     delete manifest.background.type;
-    if (manifest.background.service_worker) {
+    if (serviceWorker) {
+      writeBackgroundPage(distFirefoxDir, serviceWorker);
       manifest.background = {
-        scripts: [manifest.background.service_worker],
+        page: "background.html",
         persistent: false
       };
     }

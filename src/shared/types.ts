@@ -70,6 +70,7 @@ export type LogEntry = {
 
 export type UiPreferences = {
   compactMode: boolean;
+  colorMode: "system" | "light" | "dark";
 };
 
 export type AppState = {

@@ -19,6 +19,7 @@ import {
 import type { BackgroundMessage, PageMetaResponse, PageTextResponse } from "./shared/messages";
 import { fetchExaContent } from "./shared/exa";
 import { createId } from "./shared/ids";
+import { translate } from "./shared/i18n";
 
 const COMMAND_CLASSIFY = "classify-page";
 const MAX_LOG_CHARS = 240;
@@ -107,6 +108,13 @@ function isNoReceiverError(error: unknown) {
   return error.message.includes("Receiving end does not exist");
 }
 
+function isMissingTabError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  return error.message.includes("No tab with id");
+}
+
 async function ensureContentScript(tabId: number) {
   if (chrome.scripting?.executeScript) {
     await chrome.scripting.executeScript({
@@ -135,7 +143,7 @@ async function requestPageText(tabId: number): Promise<PageTextResponse> {
   try {
     return await sendPageTextMessage(tabId);
   } catch (error) {
-    if (!isNoReceiverError(error)) {
+    if (isMissingTabError(error) || !isNoReceiverError(error)) {
       throw error;
     }
     const injected = await ensureContentScript(tabId);
@@ -150,7 +158,7 @@ async function requestPageMeta(tabId: number): Promise<PageMetaResponse> {
   try {
     return await sendPageMetaMessage(tabId);
   } catch (error) {
-    if (!isNoReceiverError(error)) {
+    if (isMissingTabError(error) || !isNoReceiverError(error)) {
       throw error;
     }
     const injected = await ensureContentScript(tabId);
@@ -249,10 +257,22 @@ async function resolvePageText(
           exaFallback: false
         };
       }
-      await appendLog("info", "Exa 返回空内容，已回退本地解析。", url);
+      await appendLog(
+        "info",
+        translate(
+          "Exa 返回空内容，已回退本地解析。",
+          "Exa returned empty content, falling back to local parsing."
+        ),
+        url
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Exa 请求失败";
-      await appendLog("error", `Exa 解析失败：${message}`, url);
+      const message =
+        error instanceof Error ? error.message : translate("Exa 请求失败", "Exa request failed.");
+      await appendLog(
+        "error",
+        translate("Exa 解析失败：{message}", "Exa parsing failed: {message}", { message }),
+        url
+      );
     }
   }
 
@@ -359,18 +379,36 @@ async function backfillFavicons() {
 }
 
 async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
-  const tab = await getActiveTab();
-  const tabId = tab?.id ?? null;
-  if (!tabId) {
-    return { ok: false, error: "未找到当前标签页。" };
-  }
-  if (isRestrictedUrl(tab.url)) {
-    await setBadge(tabId, "NA", "#64748b");
-    await appendLog("error", "该页面不允许读取内容，请在普通网页使用。", tab.url);
-    return { ok: false, error: "该页面不允许读取内容，请在普通网页使用。" };
-  }
-
+  let tabId: number | null = null;
+  let tabUrl: string | undefined;
   try {
+    const tab = await getActiveTab();
+    tabId = tab?.id ?? null;
+    tabUrl = tab?.url;
+    if (!tabId) {
+      return {
+        ok: false,
+        error: translate("未找到当前标签页。", "Could not find the active tab.")
+      };
+    }
+    if (isRestrictedUrl(tab.url)) {
+      await setBadge(tabId, "NA", "#64748b");
+      await appendLog(
+        "error",
+        translate(
+          "该页面不允许读取内容，请在普通网页使用。",
+          "This page cannot be read. Use a regular webpage."
+        ),
+        tab.url
+      );
+      return {
+        ok: false,
+        error: translate(
+          "该页面不允许读取内容，请在普通网页使用。",
+          "This page cannot be read. Use a regular webpage."
+        )
+      };
+    }
     const state = await loadState();
     await setBadge(tabId, "EX", "#0f766e");
     const payload = await resolvePageText(tab, state);
@@ -406,8 +444,17 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         summaryLong = combined.summaryLong;
         classified = true;
       } catch (error) {
-        const message = error instanceof Error ? error.message : "AI 分类与概括失败";
-        await appendLog("error", `AI 分类与概括失败：${message}`, payload.url);
+        const message =
+          error instanceof Error
+            ? error.message
+            : translate("AI 分类与概括失败", "AI classification and summary failed.");
+        await appendLog(
+          "error",
+          translate("AI 分类与概括失败：{message}", "AI classification/summary failed: {message}", {
+            message
+          }),
+          payload.url
+        );
       }
     }
 
@@ -417,8 +464,13 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         summaryShort = summary.summaryShort;
         summaryLong = summary.summaryLong;
       } catch (error) {
-        const message = error instanceof Error ? error.message : "AI 概括失败";
-        await appendLog("error", `AI 概括失败：${message}`, payload.url);
+        const message =
+          error instanceof Error ? error.message : translate("AI 概括失败", "AI summary failed.");
+        await appendLog(
+          "error",
+          translate("AI 概括失败：{message}", "AI summary failed: {message}", { message }),
+          payload.url
+        );
       }
     }
 
@@ -459,8 +511,13 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         const vectors = await embedTexts(embeddingConfig, [embeddingText]);
         embedding = vectors[0];
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Embedding 失败";
-        await appendLog("error", `Embedding 失败：${message}`, payload.url);
+        const message =
+          error instanceof Error ? error.message : translate("Embedding 失败", "Embedding failed.");
+        await appendLog(
+          "error",
+          translate("Embedding 失败：{message}", "Embedding failed: {message}", { message }),
+          payload.url
+        );
       }
     }
 
@@ -509,22 +566,40 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
     await setBadge(tabId, "OK", "#0f766e");
     return { ok: true };
   } catch (error) {
-    await setBadge(tabId, "ERR", "#b42318");
-    const message = error instanceof Error ? error.message : "未知错误";
-    await appendLog("error", message, tab?.url);
+    if (tabId) {
+      await setBadge(tabId, "ERR", "#b42318");
+    }
+    const isMissing = isMissingTabError(error);
+    const message = isMissing
+      ? translate("标签页已关闭或不存在。", "The tab was closed or no longer exists.")
+      : error instanceof Error
+        ? error.message
+        : translate("未知错误", "Unknown error.");
+    if (!isMissing) {
+      await appendLog("error", message, tabUrl);
+    }
     return { ok: false, error: message };
   }
 }
 
 chrome.commands.onCommand.addListener((command) => {
   if (command === COMMAND_CLASSIFY) {
-    void classifyActiveTab();
+    void classifyActiveTab().catch(() => undefined);
   }
 });
 
 chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendResponse) => {
   if (message?.type === "CLASSIFY_CURRENT_TAB") {
-    classifyActiveTab().then((result) => sendResponse(result));
+    classifyActiveTab()
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        const message = isMissingTabError(error)
+          ? translate("标签页已关闭或不存在。", "The tab was closed or no longer exists.")
+          : error instanceof Error
+            ? error.message
+            : translate("未知错误", "Unknown error.");
+        sendResponse({ ok: false, error: message });
+      });
     return true;
   }
   return false;

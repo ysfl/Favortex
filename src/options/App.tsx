@@ -32,6 +32,7 @@ import type {
 } from "../shared/types";
 import { buildEmbeddingFingerprint, getDomain } from "../shared/utils";
 import { createId } from "../shared/ids";
+import { useI18n } from "../shared/i18n";
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle: string }) {
   return (
@@ -59,26 +60,10 @@ const CATEGORY_ALL = "all";
 
 type BookmarkSortMode = "recent" | "oldest" | "title";
 type ImportMode = "merge" | "replace";
+const BOOKMARK_EXPORT_TYPE = "favortex-bookmarks";
 
-const BOOKMARK_SORT_OPTIONS: { value: BookmarkSortMode; label: string }[] = [
-  { value: "recent", label: "最新收藏" },
-  { value: "oldest", label: "最早收藏" },
-  { value: "title", label: "标题 A-Z" }
-];
-
-const SEARCH_PROVIDER_OPTIONS: { value: SearchProvider; label: string }[] = [
-  { value: "openai", label: "OpenAI Compatible" },
-  { value: "openai-response", label: "OpenAI Responses" }
-];
-
-const DATE_FORMATTER = new Intl.DateTimeFormat("zh-CN", {
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit"
-});
-
-function formatDate(timestamp: number) {
-  return DATE_FORMATTER.format(new Date(timestamp));
+function formatDate(dateFormatter: Intl.DateTimeFormat, timestamp: number) {
+  return dateFormatter.format(new Date(timestamp));
 }
 
 function mergeById<T extends { id: string }>(items: T[]) {
@@ -152,6 +137,7 @@ function mergeState(current: AppState, incoming: AppState): AppState {
 
 export default function App() {
   const { state, update } = useAppState();
+  const { t, locale } = useI18n();
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
@@ -174,6 +160,7 @@ export default function App() {
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
   const [showRerankKey, setShowRerankKey] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
+  const aiImportInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
   const deferredBookmarkQuery = useDeferredValue(bookmarkQuery);
 
@@ -272,7 +259,7 @@ export default function App() {
         return a.pinned ? -1 : 1;
       }
       if (bookmarkSortMode === "title") {
-        return a.title.localeCompare(b.title, "zh-Hans-CN");
+        return a.title.localeCompare(b.title, locale === "zh" ? "zh-Hans-CN" : "en");
       }
       if (bookmarkSortMode === "oldest") {
         return a.createdAt - b.createdAt;
@@ -280,17 +267,53 @@ export default function App() {
       return b.createdAt - a.createdAt;
     });
     return items;
-  }, [filteredBookmarks, bookmarkSortMode]);
+  }, [filteredBookmarks, bookmarkSortMode, locale]);
 
   const totalBookmarks = state?.bookmarks.length ?? 0;
   const pinnedCount = state?.bookmarks.filter((bookmark) => bookmark.pinned).length ?? 0;
   const visibleBookmarks = sortedBookmarks.length;
   const activeTheme = state?.theme ?? DEFAULT_THEME_ID;
   const compactMode = state?.ui.compactMode ?? false;
+  const colorMode = state?.ui.colorMode ?? "system";
   const hasStoredAiKey = Boolean(state?.ai.apiKey);
   const hasStoredExaKey = Boolean(state?.exa.apiKey);
   const hasStoredEmbeddingKey = Boolean(state?.search.embedding.apiKey);
   const hasStoredRerankKey = Boolean(state?.search.rerank.apiKey);
+  const dateFormatter = useMemo(
+    () =>
+      new Intl.DateTimeFormat(locale === "zh" ? "zh-Hans-CN" : "en-US", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }),
+    [locale]
+  );
+
+  const bookmarkSortOptions = useMemo(
+    () => [
+      { value: "recent" as const, label: t("最新收藏", "Newest") },
+      { value: "oldest" as const, label: t("最早收藏", "Oldest") },
+      { value: "title" as const, label: t("标题 A-Z", "Title A-Z") }
+    ],
+    [t]
+  );
+
+  const searchProviderOptions = useMemo(
+    () => [
+      { value: "openai" as const, label: t("OpenAI Compatible", "OpenAI Compatible") },
+      { value: "openai-response" as const, label: t("OpenAI Responses", "OpenAI Responses") }
+    ],
+    [t]
+  );
+
+  const colorModeOptions = useMemo(
+    () => [
+      { value: "system" as const, label: t("跟随系统", "System") },
+      { value: "light" as const, label: t("浅色", "Light") },
+      { value: "dark" as const, label: t("深色", "Dark") }
+    ],
+    [t]
+  );
 
   const openCategoryDialog = (category?: Category) => {
     if (category) {
@@ -307,7 +330,7 @@ export default function App() {
 
   const saveCategory = async () => {
     if (!categoryName.trim()) {
-      setTransientStatus("请输入分类名称", "error");
+      setTransientStatus(t("请输入分类名称", "Enter a category name."), "error");
       return;
     }
     const normalizedName = categoryName.trim();
@@ -321,7 +344,7 @@ export default function App() {
       return category.name.trim().toLowerCase() === normalizedName.toLowerCase();
     });
     if (hasDuplicate) {
-      setTransientStatus("分类名称已存在", "error");
+      setTransientStatus(t("分类名称已存在", "Category name already exists."), "error");
       return;
     }
     await update((current) => {
@@ -358,7 +381,9 @@ export default function App() {
       };
     });
     setCategoryDialogOpen(false);
-    setTransientStatus(editingCategory ? "已更新分类" : "已新增分类");
+    setTransientStatus(
+      editingCategory ? t("已更新分类", "Category updated.") : t("已新增分类", "Category added.")
+    );
   };
 
   const removeCategory = async (categoryId: string) => {
@@ -377,20 +402,20 @@ export default function App() {
           )
       };
     });
-    setTransientStatus("已删除分类");
+    setTransientStatus(t("已删除分类", "Category deleted."));
   };
 
   const saveRule = async () => {
     const domain = ruleDomain.trim().toLowerCase();
     if (!domain) {
-      setTransientStatus("请输入规则域名", "error");
+      setTransientStatus(t("请输入规则域名", "Enter a rule domain."), "error");
       return;
     }
     const nextRuleId = createId();
     const nextCreatedAt = Date.now();
     const hasDuplicate = state?.rules.some((rule) => rule.domain === domain);
     if (hasDuplicate) {
-      setTransientStatus("该域名已存在规则", "error");
+      setTransientStatus(t("该域名已存在规则", "Rule already exists for this domain."), "error");
       return;
     }
     await update((current) => ({
@@ -409,7 +434,7 @@ export default function App() {
     }));
     setRuleDomain("");
     setRuleDialogOpen(false);
-    setTransientStatus("已新增规则");
+    setTransientStatus(t("已新增规则", "Rule added."));
   };
 
   const removeRule = async (ruleId: string) => {
@@ -417,7 +442,7 @@ export default function App() {
       ...current,
       rules: current.rules.filter((rule) => rule.id !== ruleId)
     }));
-    setTransientStatus("已删除规则");
+    setTransientStatus(t("已删除规则", "Rule deleted."));
   };
 
   const saveAiConfig = async () => {
@@ -426,12 +451,14 @@ export default function App() {
     const baseUrlChanged = baseUrl !== (state?.ai.baseUrl ?? "");
     const apiKey = aiDraft.apiKey.trim() || (baseUrlChanged ? "" : state?.ai.apiKey ?? "");
     if (!baseUrl || !model) {
-      setTransientStatus("请完整填写 AI 配置", "error");
+      setTransientStatus(t("请完整填写 AI 配置", "Complete the AI config."), "error");
       return;
     }
     if (!apiKey) {
       setTransientStatus(
-        baseUrlChanged ? "Base URL 已修改，请重新填写 API Key" : "请填写 API Key",
+        baseUrlChanged
+          ? t("Base URL 已修改，请重新填写 API Key", "Base URL changed. Re-enter API key.")
+          : t("请填写 API Key", "Enter the API key."),
         "error"
       );
       return;
@@ -445,7 +472,7 @@ export default function App() {
         model
       }
     }));
-    setTransientStatus("已保存 AI 配置");
+    setTransientStatus(t("已保存 AI 配置", "AI settings saved."));
   };
 
   const setAiField = <T extends keyof typeof aiDraft>(field: T, value: (typeof aiDraft)[T]) => {
@@ -526,9 +553,29 @@ export default function App() {
         ...current,
         theme: themeId
       }));
-      setTransientStatus("已切换主题色");
+      setTransientStatus(t("已切换主题色", "Theme updated."));
     },
-    [state, update, setTransientStatus]
+    [state, update, setTransientStatus, t]
+  );
+
+  const setColorMode = useCallback(
+    (mode: AppState["ui"]["colorMode"]) => {
+      if (!state) {
+        return;
+      }
+      if (state.ui.colorMode === mode) {
+        return;
+      }
+      void update((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          colorMode: mode
+        }
+      }));
+      setTransientStatus(t("已切换显示模式", "Display mode updated."));
+    },
+    [state, update, setTransientStatus, t]
   );
 
   const setCompactMode = useCallback(
@@ -546,9 +593,11 @@ export default function App() {
           compactMode: enabled
         }
       }));
-      setTransientStatus(enabled ? "已启用简洁模式" : "已关闭简洁模式");
+      setTransientStatus(
+        enabled ? t("已启用简洁模式", "Compact mode enabled.") : t("已关闭简洁模式", "Compact mode off.")
+      );
     },
-    [state, update, setTransientStatus]
+    [state, update, setTransientStatus, t]
   );
 
   const resetAiConfig = useCallback(() => {
@@ -558,20 +607,22 @@ export default function App() {
       apiKey: "",
       model: DEFAULT_STATE.ai.model
     });
-    setTransientStatus("已恢复默认配置");
-  }, [setTransientStatus]);
+    setTransientStatus(t("已恢复默认配置", "Defaults restored."));
+  }, [setTransientStatus, t]);
 
   const saveExaConfig = useCallback(async () => {
     const baseUrl = exaDraft.baseUrl.trim();
     const baseUrlChanged = baseUrl !== (state?.exa.baseUrl ?? "");
     const apiKey = exaDraft.apiKey.trim() || (baseUrlChanged ? "" : state?.exa.apiKey ?? "");
     if (exaDraft.enabled && !baseUrl) {
-      setTransientStatus("请填写 Exa Base URL", "error");
+      setTransientStatus(t("请填写 Exa Base URL", "Enter the Exa base URL."), "error");
       return;
     }
     if (exaDraft.enabled && !apiKey) {
       setTransientStatus(
-        baseUrlChanged ? "Base URL 已修改，请重新填写 Exa API Key" : "请填写 Exa API Key",
+        baseUrlChanged
+          ? t("Base URL 已修改，请重新填写 Exa API Key", "Base URL changed. Re-enter Exa API key.")
+          : t("请填写 Exa API Key", "Enter the Exa API key."),
         "error"
       );
       return;
@@ -584,8 +635,8 @@ export default function App() {
         apiKey
       }
     }));
-    setTransientStatus("已保存 Exa 配置");
-  }, [exaDraft, state, update, setTransientStatus]);
+    setTransientStatus(t("已保存 Exa 配置", "Exa settings saved."));
+  }, [exaDraft, state, update, setTransientStatus, t]);
 
   const resetExaConfig = useCallback(() => {
     setExaDraft({
@@ -593,8 +644,8 @@ export default function App() {
       baseUrl: DEFAULT_STATE.exa.baseUrl,
       apiKey: ""
     });
-    setTransientStatus("已恢复 Exa 默认配置");
-  }, [setTransientStatus]);
+    setTransientStatus(t("已恢复 Exa 默认配置", "Exa defaults restored."));
+  }, [setTransientStatus, t]);
 
   const saveSearchConfig = useCallback(async () => {
     if (!state) {
@@ -609,14 +660,17 @@ export default function App() {
       (embeddingBaseUrlChanged ? "" : state.search.embedding.apiKey ?? "");
 
     if (!embeddingBaseUrl || !embeddingModel) {
-      setTransientStatus("请完整填写 Embedding 配置", "error");
+      setTransientStatus(t("请完整填写 Embedding 配置", "Complete the embedding config."), "error");
       return;
     }
     if (!embeddingApiKey) {
       setTransientStatus(
         embeddingBaseUrlChanged
-          ? "Embedding Base URL 已修改，请重新填写 API Key"
-          : "请填写 Embedding API Key",
+          ? t(
+              "Embedding Base URL 已修改，请重新填写 API Key",
+              "Embedding base URL changed. Re-enter API key."
+            )
+          : t("请填写 Embedding API Key", "Enter the embedding API key."),
         "error"
       );
       return;
@@ -632,14 +686,17 @@ export default function App() {
 
     if (rerankEnabled) {
       if (!rerankBaseUrl || !rerankModel) {
-        setTransientStatus("请完整填写 Reranker 配置", "error");
+        setTransientStatus(t("请完整填写 Reranker 配置", "Complete the reranker config."), "error");
         return;
       }
       if (!rerankApiKey) {
         setTransientStatus(
           rerankBaseUrlChanged
-            ? "Reranker Base URL 已修改，请重新填写 API Key"
-            : "请填写 Reranker API Key",
+            ? t(
+                "Reranker Base URL 已修改，请重新填写 API Key",
+                "Reranker base URL changed. Re-enter API key."
+              )
+            : t("请填写 Reranker API Key", "Enter the reranker API key."),
           "error"
         );
         return;
@@ -677,8 +734,8 @@ export default function App() {
         minScore: searchDraft.minScore
       }
     }));
-    setTransientStatus("已保存搜索配置");
-  }, [searchDraft, state, update, setTransientStatus]);
+    setTransientStatus(t("已保存搜索配置", "Search settings saved."));
+  }, [searchDraft, state, update, setTransientStatus, t]);
 
   const resetSearchConfig = useCallback(() => {
     setSearchDraft({
@@ -692,25 +749,144 @@ export default function App() {
       },
       minScore: DEFAULT_STATE.search.minScore
     });
-    setTransientStatus("已恢复搜索默认配置");
-  }, [setTransientStatus]);
+    setTransientStatus(t("已恢复搜索默认配置", "Search defaults restored."));
+  }, [setTransientStatus, t]);
 
   const handleExport = useCallback(() => {
     if (!state) {
       return;
     }
-    const payload = JSON.stringify(state, null, 2);
+    const payload = JSON.stringify(
+      {
+        type: BOOKMARK_EXPORT_TYPE,
+        exportedAt: new Date().toISOString(),
+        categories: state.categories,
+        rules: state.rules,
+        bookmarks: state.bookmarks
+      },
+      null,
+      2
+    );
     const blob = new Blob([payload], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
-    anchor.download = `favortex-export-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.download = `favortex-bookmarks-${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setTransientStatus("已导出备份");
-  }, [state, setTransientStatus]);
+    setTransientStatus(t("已导出收藏备份", "Bookmarks exported."));
+  }, [state, setTransientStatus, t]);
+
+  const handleExportAiConfig = useCallback(() => {
+    if (!state) {
+      return;
+    }
+    const confirmed = window.confirm(
+      t(
+        "即将导出包含密钥的 AI 配置，请勿分享或上传到公开位置。确定继续？",
+        "This export includes API keys. Do NOT share or upload it publicly. Continue?"
+      )
+    );
+    if (!confirmed) {
+      setTransientStatus(t("已取消导出", "Export cancelled."), "error");
+      return;
+    }
+    const payload = JSON.stringify(
+      {
+        type: "favortex-ai-config",
+        exportedAt: new Date().toISOString(),
+        ai: state.ai,
+        exa: state.exa,
+        search: state.search
+      },
+      null,
+      2
+    );
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `favortex-ai-config-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setTransientStatus(t("已导出 AI 配置", "AI config exported."));
+  }, [state, setTransientStatus, t]);
+
+  const openAiImportDialog = useCallback(() => {
+    if (
+      !window.confirm(
+        t(
+          "即将导入包含密钥的 AI 配置，请确保文件来源可信。确定继续？",
+          "You are about to import a file with API keys. Make sure it is trusted. Continue?"
+        )
+      )
+    ) {
+      setTransientStatus(t("已取消导入", "Import cancelled."), "error");
+      return;
+    }
+    aiImportInputRef.current?.click();
+  }, [setTransientStatus, t]);
+
+  const handleImportAiConfig = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) {
+        return;
+      }
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text) as Partial<AppState> & {
+          type?: string;
+          ai?: AppState["ai"];
+          exa?: AppState["exa"];
+          search?: AppState["search"];
+        };
+        const aiPayload = parsed.ai;
+        const exaPayload = parsed.exa;
+        const searchPayload = parsed.search;
+        if (!aiPayload && !exaPayload && !searchPayload) {
+          throw new Error(
+            t("AI 配置文件内容无效", "Invalid AI config file.")
+          );
+        }
+        await update((current) => {
+          const mergedSearch = searchPayload
+            ? {
+                ...current.search,
+                ...searchPayload,
+                embedding: {
+                  ...current.search.embedding,
+                  ...(searchPayload.embedding ?? {})
+                },
+                rerank: {
+                  ...current.search.rerank,
+                  ...(searchPayload.rerank ?? {})
+                }
+              }
+            : current.search;
+          const merged = normalizeState({
+            ...current,
+            ai: aiPayload ? { ...current.ai, ...aiPayload } : current.ai,
+            exa: exaPayload ? { ...current.exa, ...exaPayload } : current.exa,
+            search: mergedSearch
+          });
+          return merged;
+        });
+        setTransientStatus(t("已导入 AI 配置", "AI config imported."));
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : t("导入失败", "Import failed.");
+        setTransientStatus(message, "error");
+      } finally {
+        event.target.value = "";
+      }
+    },
+    [setTransientStatus, t, update]
+  );
 
   const handleImportFile = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -720,22 +896,52 @@ export default function App() {
       }
       try {
         const text = await file.text();
-        const parsed = JSON.parse(text) as Partial<AppState>;
-        const incoming = normalizeState(parsed);
+        const parsed = JSON.parse(text) as Partial<AppState> & {
+          type?: string;
+          data?: Partial<AppState>;
+        };
+        if (parsed.type && parsed.type !== BOOKMARK_EXPORT_TYPE) {
+          if (parsed.type === "favortex-ai-config") {
+            throw new Error(
+              t("该文件为 AI 配置，请使用 AI 配置导入。", "This is an AI config file.")
+            );
+          }
+          throw new Error(
+            t("收藏备份文件类型不正确。", "Invalid bookmarks backup file.")
+          );
+        }
+        const payload = parsed.type === BOOKMARK_EXPORT_TYPE ? parsed : parsed.data ?? parsed;
+        const incoming = normalizeState({
+          categories: payload.categories ?? [],
+          rules: payload.rules ?? [],
+          bookmarks: payload.bookmarks ?? [],
+          logs: []
+        });
         if (importMode === "replace") {
-          await update(() => incoming);
+          await update((current) =>
+            normalizeState({
+              ...current,
+              categories: incoming.categories,
+              rules: incoming.rules,
+              bookmarks: incoming.bookmarks
+            })
+          );
         } else {
           await update((current) => mergeState(current, incoming));
         }
-        setTransientStatus(importMode === "replace" ? "已覆盖导入" : "已合并导入");
+        setTransientStatus(
+          importMode === "replace"
+            ? t("已覆盖导入收藏", "Bookmarks replaced.")
+            : t("已合并导入收藏", "Bookmarks merged.")
+        );
       } catch (error) {
-        const message = error instanceof Error ? error.message : "导入失败";
+        const message = error instanceof Error ? error.message : t("导入失败", "Import failed.");
         setTransientStatus(message, "error");
       } finally {
         event.target.value = "";
       }
     },
-    [importMode, update, setTransientStatus]
+    [importMode, update, setTransientStatus, t]
   );
 
   const openImportDialog = useCallback(() => {
@@ -744,35 +950,42 @@ export default function App() {
 
   const clearBookmarks = useCallback(() => {
     if (!state?.bookmarks.length) {
-      setTransientStatus("暂无可清理的收藏", "error");
+      setTransientStatus(t("暂无可清理的收藏", "No bookmarks to clear."), "error");
       return;
     }
-    if (!window.confirm("确定要清空所有收藏吗？此操作不可撤销。")) {
-      setTransientStatus("已取消清空收藏", "error");
+    if (
+      !window.confirm(
+        t(
+          "确定要清空所有收藏吗？此操作不可撤销。",
+          "Clear all bookmarks? This action cannot be undone."
+        )
+      )
+    ) {
+      setTransientStatus(t("已取消清空收藏", "Clear cancelled."), "error");
       return;
     }
     void update((current) => ({
       ...current,
       bookmarks: []
     }));
-    setTransientStatus("已清空收藏");
-  }, [state, update, setTransientStatus]);
+    setTransientStatus(t("已清空收藏", "All bookmarks cleared."));
+  }, [state, update, setTransientStatus, t]);
 
   const clearLogs = useCallback(() => {
     if (!state?.logs.length) {
-      setTransientStatus("暂无可清理的日志", "error");
+      setTransientStatus(t("暂无可清理的日志", "No logs to clear."), "error");
       return;
     }
-    if (!window.confirm("确定要清空日志吗？")) {
-      setTransientStatus("已取消清空日志", "error");
+    if (!window.confirm(t("确定要清空日志吗？", "Clear all logs?"))) {
+      setTransientStatus(t("已取消清空日志", "Clear cancelled."), "error");
       return;
     }
     void update((current) => ({
       ...current,
       logs: []
     }));
-    setTransientStatus("已清空日志");
-  }, [state, update, setTransientStatus]);
+    setTransientStatus(t("已清空日志", "All logs cleared."));
+  }, [state, update, setTransientStatus, t]);
 
   const togglePinned = useCallback(
     (id: string) => {
@@ -783,15 +996,17 @@ export default function App() {
           bookmark.id === id ? { ...bookmark, pinned: !bookmark.pinned } : bookmark
         )
       }));
-      setTransientStatus(isPinned ? "已取消置顶" : "已置顶收藏");
+      setTransientStatus(
+        isPinned ? t("已取消置顶", "Unpinned.") : t("已置顶收藏", "Pinned.")
+      );
     },
-    [state, update, setTransientStatus]
+    [state, update, setTransientStatus, t]
   );
 
   const updateBookmarkCategory = useCallback(
     (id: string, categoryId: string) => {
       const targetId = categoryMap.has(categoryId) ? categoryId : DEFAULT_CATEGORY_ID;
-      const categoryName = categoryMap.get(targetId)?.name ?? "未分类";
+      const categoryName = categoryMap.get(targetId)?.name ?? t("未分类", "Inbox");
       const currentCategory = state?.bookmarks.find((bookmark) => bookmark.id === id)?.categoryId;
       if (currentCategory === targetId) {
         return;
@@ -802,36 +1017,36 @@ export default function App() {
           bookmark.id === id ? { ...bookmark, categoryId: targetId } : bookmark
         )
       }));
-      setTransientStatus(`已移动到 ${categoryName}`);
+      setTransientStatus(t("已移动到 {name}", "Moved to {name}.", { name: categoryName }));
     },
-    [categoryMap, state, update, setTransientStatus]
+    [categoryMap, state, update, setTransientStatus, t]
   );
 
   const deleteBookmark = useCallback(
     (id: string) => {
-      if (!window.confirm("确定要删除这条收藏吗？")) {
+      if (!window.confirm(t("确定要删除这条收藏吗？", "Delete this bookmark?"))) {
         return;
       }
       void update((current) => ({
         ...current,
         bookmarks: current.bookmarks.filter((bookmark) => bookmark.id !== id)
       }));
-      setTransientStatus("已删除收藏");
+      setTransientStatus(t("已删除收藏", "Bookmark deleted."));
     },
-    [update, setTransientStatus]
+    [update, setTransientStatus, t]
   );
 
   const copyUrl = useCallback(
     async (url: string) => {
       try {
         await navigator.clipboard.writeText(url);
-        setTransientStatus("链接已复制");
+        setTransientStatus(t("链接已复制", "Link copied."));
       } catch (error) {
-        const message = error instanceof Error ? error.message : "复制失败";
+        const message = error instanceof Error ? error.message : t("复制失败", "Copy failed.");
         setTransientStatus(message, "error");
       }
     },
-    [setTransientStatus]
+    [setTransientStatus, t]
   );
 
   return (
@@ -840,14 +1055,21 @@ export default function App() {
         <header className="glass-card rounded-[32px] px-6 py-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <span className="chip">Setup</span>
-              <h1 className="mt-3 text-2xl font-semibold text-slate-900">Favortex 设置中心</h1>
+              <span className="chip">{t("设置", "Setup")}</span>
+              <h1 className="mt-3 text-2xl font-semibold text-slate-900">
+                {t("Favortex 设置中心", "Favortex Settings")}
+              </h1>
               <p className="mt-2 text-sm text-slate-600">
-                配置分类、规则和 AI 供应商，让收藏自动完成。
+                {t(
+                  "配置分类、规则和 AI 供应商，让收藏自动完成。",
+                  "Configure categories, rules, and AI providers to automate your saves."
+                )}
               </p>
             </div>
             <div className="rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-xs text-slate-600">
-              快捷键默认: Ctrl+Shift+Y
+              {t("快捷键默认: {shortcut}", "Default shortcut: {shortcut}", {
+                shortcut: "Ctrl+Shift+Y"
+              })}
             </div>
           </div>
         </header>
@@ -855,66 +1077,106 @@ export default function App() {
         <section className="glass-card rounded-[28px] px-6 py-5">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-lg font-semibold text-slate-900">主题色</h2>
-              <p className="mt-1 text-sm text-slate-600">选择一个舒适的主色调。</p>
+              <h2 className="text-lg font-semibold text-slate-900">
+                {t("主题色", "Theme")}
+              </h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {t("选择一个舒适的主色调。", "Pick a comfortable primary tone.")}
+              </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              {THEMES.map((theme) => (
-                <button
-                  key={theme.id}
-                  type="button"
-                  onClick={() => setTheme(theme.id)}
-                  className="flex flex-col items-center gap-1 rounded-2xl px-2 py-1 text-xs text-slate-600 transition hover:text-slate-900"
-                  aria-pressed={activeTheme === theme.id}
-                  aria-label={`切换主题色：${theme.label}`}
-                >
-                  <span
-                    className={clsx(
-                      "theme-swatch",
-                      activeTheme === theme.id && "is-active"
-                    )}
-                    data-theme={theme.id}
-                  />
-                  <span>{theme.label}</span>
-                </button>
-              ))}
+              {THEMES.map((theme) => {
+                const themeLabel = locale === "zh" ? theme.label.zh : theme.label.en;
+                return (
+                  <button
+                    key={theme.id}
+                    type="button"
+                    onClick={() => setTheme(theme.id)}
+                    className="flex flex-col items-center gap-1 rounded-2xl px-2 py-1 text-xs text-slate-600 transition hover:text-slate-900"
+                    aria-pressed={activeTheme === theme.id}
+                    aria-label={t("切换主题色：{name}", "Switch theme: {name}", {
+                      name: themeLabel
+                    })}
+                  >
+                    <span
+                      className={clsx(
+                        "theme-swatch",
+                        activeTheme === theme.id && "is-active"
+                      )}
+                      data-theme={theme.id}
+                    />
+                    <span>{themeLabel}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
-            <div>
-              <div className="text-sm font-semibold text-slate-800">简洁模式</div>
-              <div className="mt-1 text-xs text-slate-500">
-                弹窗列表仅展示标题，悬浮后显示操作按钮。
+          <div className="mt-5 grid gap-3 md:grid-cols-2">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-800">
+                  {t("简洁模式", "Compact mode")}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {t(
+                    "弹窗列表仅展示标题，悬浮后显示操作按钮。",
+                    "Only show titles in the popup. Actions appear on hover."
+                  )}
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-slate-700"
+                  checked={compactMode}
+                  onChange={(event) => setCompactMode(event.target.checked)}
+                  disabled={!state}
+                />
+                {t("启用", "Enable")}
+              </label>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold text-slate-800">
+                  {t("显示模式", "Display mode")}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">
+                  {t("可跟随系统或手动指定深浅色。", "Follow system or choose light/dark.")}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {colorModeOptions.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setColorMode(option.value)}
+                    className={clsx(
+                      "rounded-full px-4 py-2 text-xs font-semibold transition",
+                      colorMode === option.value ? "gradient-button" : "outline-button"
+                    )}
+                    aria-pressed={colorMode === option.value}
+                  >
+                    {option.label}
+                  </button>
+                ))}
               </div>
             </div>
-            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-              <input
-                type="checkbox"
-                className="h-4 w-4 accent-slate-700"
-                checked={compactMode}
-                onChange={(event) => setCompactMode(event.target.checked)}
-                disabled={!state}
-              />
-              启用
-            </label>
           </div>
         </section>
 
         <Tabs.Root defaultValue="categories" className="glass-card rounded-[32px] px-6 py-6">
           <Tabs.List className="flex flex-wrap gap-2">
             {[
-              { value: "categories", label: "分类" },
-              { value: "rules", label: "规则" },
-              { value: "bookmarks", label: "收藏管理" },
-              { value: "ai", label: "AI 配置" }
+              { value: "categories", label: t("分类", "Categories") },
+              { value: "rules", label: t("规则", "Rules") },
+              { value: "bookmarks", label: t("收藏管理", "Bookmarks") },
+              { value: "ai", label: t("AI 配置", "AI Settings") }
             ].map((tab) => (
               <Tabs.Trigger
                 key={tab.value}
                 value={tab.value}
                 className={clsx(
-                  "rounded-full px-4 py-2 text-sm font-semibold transition",
-                  "data-[state=active]:gradient-button",
-                  "data-[state=inactive]:outline-button"
+                  "tabs-trigger rounded-full px-4 py-2 text-sm font-semibold transition"
                 )}
               >
                 {tab.label}
@@ -924,12 +1186,15 @@ export default function App() {
 
           <Tabs.Content value="categories" className="mt-6 space-y-4">
             <SectionHeader
-              title="分类管理"
-              subtitle="先创建几个主题分类，AI 会在这里放置链接。"
+              title={t("分类管理", "Category management")}
+              subtitle={t(
+                "先创建几个主题分类，AI 会在这里放置链接。",
+                "Create a few topic categories. AI will place links here."
+              )}
             />
             {!state ? (
               <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
-                正在加载分类...
+                {t("正在加载分类...", "Loading categories...")}
               </div>
             ) : (
               <div className="space-y-3">
@@ -943,7 +1208,7 @@ export default function App() {
                   onClick={() => openCategoryDialog()}
                   className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700"
                 >
-                  <PlusIcon /> 新增分类
+                  <PlusIcon /> {t("新增分类", "Add category")}
                 </button>
                 <div className="grid gap-3 sm:grid-cols-2">
                   {sortedCategories.map((category) => (
@@ -964,7 +1229,7 @@ export default function App() {
                             onClick={() => openCategoryDialog(category)}
                             className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
                           >
-                            编辑
+                            {t("编辑", "Edit")}
                           </button>
                           <button
                             type="button"
@@ -972,7 +1237,7 @@ export default function App() {
                             disabled={category.id === DEFAULT_CATEGORY_ID}
                             className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500 disabled:opacity-50"
                           >
-                            删除
+                            {t("删除", "Delete")}
                           </button>
                         </div>
                       </div>
@@ -986,12 +1251,15 @@ export default function App() {
 
           <Tabs.Content value="rules" className="mt-6 space-y-4">
             <SectionHeader
-              title="规则管理"
-              subtitle="为常见域名建立固定归属，例如 linux.do 自动归类。"
+              title={t("规则管理", "Rule management")}
+              subtitle={t(
+                "为常见域名建立固定归属，例如 linux.do 自动归类。",
+                "Map common domains to categories (e.g. linux.do)."
+              )}
             />
             {!state ? (
               <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
-                正在加载规则...
+                {t("正在加载规则...", "Loading rules...")}
               </div>
             ) : (
               <div className="space-y-3">
@@ -1000,12 +1268,15 @@ export default function App() {
                   onClick={() => setRuleDialogOpen(true)}
                   className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700"
                 >
-                  <PlusIcon /> 新增规则
+                  <PlusIcon /> {t("新增规则", "Add rule")}
                 </button>
                 <div className="grid gap-3">
                   {rulesWithCategory.length === 0 ? (
                     <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4 text-sm text-slate-500">
-                      暂无规则，添加后可跳过 AI 自动放入对应分类。
+                      {t(
+                        "暂无规则，添加后可跳过 AI 自动放入对应分类。",
+                        "No rules yet. Add one to bypass AI for matching domains."
+                      )}
                     </div>
                   ) : (
                     rulesWithCategory.map((rule) => (
@@ -1016,7 +1287,7 @@ export default function App() {
                         <div>
                           <div className="text-sm font-semibold text-slate-800">{rule.domain}</div>
                           <div className="mt-1 text-xs text-slate-500">
-                            {rule.category?.name || "未分类"}
+                            {rule.category?.name || t("未分类", "Inbox")}
                           </div>
                         </div>
                         <button
@@ -1024,7 +1295,7 @@ export default function App() {
                           onClick={() => removeRule(rule.id)}
                           className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500"
                         >
-                          删除
+                          {t("删除", "Delete")}
                         </button>
                       </div>
                     ))
@@ -1036,20 +1307,20 @@ export default function App() {
 
           <Tabs.Content value="bookmarks" className="mt-6 space-y-4">
             <SectionHeader
-              title="收藏管理"
-              subtitle="整理收藏、调整分类，并导出备份。"
+              title={t("收藏管理", "Bookmark management")}
+              subtitle={t("整理收藏、调整分类，并导出备份。", "Organize, reassign, and export.")}
             />
             {!state ? (
               <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
-                正在加载收藏...
+                {t("正在加载收藏...", "Loading bookmarks...")}
               </div>
             ) : (
               <div className="space-y-4">
                 <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
                   <div className="flex flex-wrap items-center gap-3 text-sm text-slate-600">
-                    <span>总收藏 {totalBookmarks}</span>
-                    <span>置顶 {pinnedCount}</span>
-                    <span>显示 {visibleBookmarks}</span>
+                    <span>{t("总收藏 {count}", "Total {count}", { count: totalBookmarks })}</span>
+                    <span>{t("置顶 {count}", "Pinned {count}", { count: pinnedCount })}</span>
+                    <span>{t("显示 {count}", "Showing {count}", { count: visibleBookmarks })}</span>
                   </div>
                 </div>
 
@@ -1057,9 +1328,14 @@ export default function App() {
                   <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-slate-800">数据备份</div>
+                        <div className="text-sm font-semibold text-slate-800">
+                          {t("收藏备份", "Bookmarks backup")}
+                        </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          导出 JSON 备份或导入恢复收藏数据。
+                          {t(
+                            "导出或导入收藏、分类与规则（不包含 AI 配置）。",
+                            "Export/import bookmarks, categories, and rules (no AI config)."
+                          )}
                         </p>
                       </div>
                       <DownloadIcon className="text-slate-400" />
@@ -1070,25 +1346,25 @@ export default function App() {
                         onClick={handleExport}
                         className="gradient-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
                       >
-                        <DownloadIcon /> 导出备份
+                        <DownloadIcon /> {t("导出收藏", "Export bookmarks")}
                       </button>
                       <button
                         type="button"
                         onClick={openImportDialog}
                         className="outline-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
                       >
-                        <UploadIcon /> 导入数据
+                        <UploadIcon /> {t("导入收藏", "Import bookmarks")}
                       </button>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                      <span>导入方式</span>
+                      <span>{t("导入方式", "Import mode")}</span>
                       <select
                         className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
                         value={importMode}
                         onChange={(event) => setImportMode(event.target.value as ImportMode)}
                       >
-                        <option value="merge">合并现有</option>
-                        <option value="replace">覆盖现有</option>
+                        <option value="merge">{t("合并现有", "Merge")}</option>
+                        <option value="replace">{t("覆盖现有", "Replace")}</option>
                       </select>
                     </div>
                     <input
@@ -1103,9 +1379,11 @@ export default function App() {
                   <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="text-sm font-semibold text-slate-800">清理操作</div>
+                        <div className="text-sm font-semibold text-slate-800">
+                          {t("清理操作", "Cleanup")}
+                        </div>
                         <p className="mt-1 text-xs text-slate-500">
-                          清空所有收藏或请求日志。
+                          {t("清空所有收藏或请求日志。", "Clear bookmarks or request logs.")}
                         </p>
                       </div>
                       <TrashIcon className="text-slate-400" />
@@ -1116,14 +1394,14 @@ export default function App() {
                         onClick={clearBookmarks}
                         className="inline-flex items-center gap-2 rounded-full border border-red-200 bg-white/80 px-4 py-2 text-sm font-semibold text-red-600"
                       >
-                        <TrashIcon /> 清空收藏
+                        <TrashIcon /> {t("清空收藏", "Clear bookmarks")}
                       </button>
                       <button
                         type="button"
                         onClick={clearLogs}
                         className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-600"
                       >
-                        <TrashIcon /> 清空日志
+                        <TrashIcon /> {t("清空日志", "Clear logs")}
                       </button>
                     </div>
                   </div>
@@ -1134,18 +1412,18 @@ export default function App() {
                     <input
                       type="search"
                       className="input-field w-full md:flex-1"
-                      placeholder="搜索标题、链接或摘要"
+                      placeholder={t("搜索标题、链接或摘要", "Search title, URL, or summary")}
                       value={bookmarkQuery}
                       onChange={(event) => setBookmarkQuery(event.target.value)}
-                      aria-label="搜索收藏"
+                      aria-label={t("搜索收藏", "Search bookmarks")}
                     />
                     <select
                       className="input-field w-full md:w-56"
                       value={bookmarkCategoryId}
                       onChange={(event) => setBookmarkCategoryId(event.target.value)}
-                      aria-label="筛选分类"
+                      aria-label={t("筛选分类", "Filter category")}
                     >
-                      <option value={CATEGORY_ALL}>全部分类</option>
+                      <option value={CATEGORY_ALL}>{t("全部分类", "All categories")}</option>
                       {sortedCategories.map((category) => (
                         <option key={category.id} value={category.id}>
                           {category.name}
@@ -1158,9 +1436,9 @@ export default function App() {
                       onChange={(event) =>
                         setBookmarkSortMode(event.target.value as BookmarkSortMode)
                       }
-                      aria-label="排序方式"
+                      aria-label={t("排序方式", "Sort order")}
                     >
-                      {BOOKMARK_SORT_OPTIONS.map((option) => (
+                      {bookmarkSortOptions.map((option) => (
                         <option key={option.value} value={option.value}>
                           {option.label}
                         </option>
@@ -1172,7 +1450,7 @@ export default function App() {
                 <div className="grid gap-3">
                   {sortedBookmarks.length === 0 ? (
                     <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4 text-sm text-slate-500">
-                      暂无收藏，先在弹窗里添加一些链接。
+                      {t("暂无收藏，先在弹窗里添加一些链接。", "No bookmarks yet. Add some from the popup.")}
                     </div>
                   ) : (
                     sortedBookmarks.map((bookmark) => {
@@ -1194,7 +1472,7 @@ export default function App() {
                               </a>
                               <div className="mt-1 text-xs text-slate-500">
                                 {getDomain(bookmark.url) || bookmark.url} ·{" "}
-                                {formatDate(bookmark.createdAt)}
+                                {formatDate(dateFormatter, bookmark.createdAt)}
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1202,8 +1480,8 @@ export default function App() {
                                 type="button"
                                 className="icon-button"
                                 onClick={() => togglePinned(bookmark.id)}
-                                aria-label={bookmark.pinned ? "取消置顶" : "置顶"}
-                                title={bookmark.pinned ? "取消置顶" : "置顶"}
+                                aria-label={bookmark.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+                                title={bookmark.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
                               >
                                 {bookmark.pinned ? <StarFilledIcon /> : <StarIcon />}
                               </button>
@@ -1211,8 +1489,8 @@ export default function App() {
                                 type="button"
                                 className="icon-button"
                                 onClick={() => void copyUrl(bookmark.url)}
-                                aria-label="复制链接"
-                                title="复制链接"
+                                aria-label={t("复制链接", "Copy link")}
+                                title={t("复制链接", "Copy link")}
                               >
                                 <ClipboardCopyIcon />
                               </button>
@@ -1220,8 +1498,8 @@ export default function App() {
                                 type="button"
                                 className="icon-button"
                                 onClick={() => deleteBookmark(bookmark.id)}
-                                aria-label="删除收藏"
-                                title="删除收藏"
+                                aria-label={t("删除收藏", "Delete bookmark")}
+                                title={t("删除收藏", "Delete bookmark")}
                               >
                                 <TrashIcon />
                               </button>
@@ -1237,11 +1515,11 @@ export default function App() {
                               <CategoryBadge category={category} />
                             ) : (
                               <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600">
-                                未分类
+                                {t("未分类", "Inbox")}
                               </span>
                             )}
                             <div className="flex items-center gap-2">
-                              <span>移动到</span>
+                              <span>{t("移动到", "Move to")}</span>
                               <select
                                 className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
                                 value={bookmark.categoryId}
@@ -1268,18 +1546,21 @@ export default function App() {
 
           <Tabs.Content value="ai" className="mt-6 space-y-4">
             <SectionHeader
-              title="AI 服务配置"
-              subtitle="配置 API 提供商、Base URL、模型以及密钥。"
+              title={t("AI 服务配置", "AI service settings")}
+              subtitle={t(
+                "配置 API 提供商、Base URL、模型以及密钥。",
+                "Configure API type, base URL, model, and key."
+              )}
             />
             {!state ? (
               <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
-                正在加载 AI 配置...
+                {t("正在加载 AI 配置...", "Loading AI settings...")}
               </div>
             ) : (
               <div className="space-y-5">
                 <div className="grid gap-4 md:grid-cols-2">
                   <label className="space-y-2">
-                    <FieldLabel label="API 类型" />
+                    <FieldLabel label={t("API 类型", "API type")} />
                     <Select.Root
                       value={aiDraft.type}
                       onValueChange={(value) => setAiField("type", value as ApiType)}
@@ -1301,7 +1582,7 @@ export default function App() {
                               <Select.Item
                                 key={option.value}
                                 value={option.value}
-                                className="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700 data-[highlighted]:bg-slate-100"
+                                className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
                               >
                                 <Select.ItemText>{option.label}</Select.ItemText>
                                 <Select.ItemIndicator>
@@ -1316,18 +1597,18 @@ export default function App() {
                   </label>
 
                   <label className="space-y-2">
-                    <FieldLabel label="模型" />
+                    <FieldLabel label={t("模型", "Model")} />
                     <input
                       className="input-field w-full"
                       value={aiDraft.model}
                       onChange={(event) => setAiField("model", event.target.value)}
-                      placeholder="例如 gpt-4o-mini"
+                      placeholder={t("例如 gpt-4o-mini", "e.g. gpt-4o-mini")}
                     />
                   </label>
                 </div>
 
                 <label className="space-y-2">
-                  <FieldLabel label="Base URL" />
+                  <FieldLabel label={t("Base URL", "Base URL")} />
                   <input
                     className="input-field w-full"
                     value={aiDraft.baseUrl}
@@ -1338,7 +1619,7 @@ export default function App() {
                 </label>
 
                 <label className="space-y-2">
-                  <FieldLabel label="API Key" />
+                  <FieldLabel label={t("API Key", "API key")} />
                   <div className="flex flex-wrap items-center gap-2">
                     <input
                       type={showAiKey ? "text" : "password"}
@@ -1353,14 +1634,21 @@ export default function App() {
                       onClick={() => setShowAiKey((prev) => !prev)}
                       className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
                       aria-pressed={showAiKey}
-                      aria-label={showAiKey ? "隐藏 API Key" : "显示 API Key"}
+                      aria-label={
+                        showAiKey
+                          ? t("隐藏 API Key", "Hide API key")
+                          : t("显示 API Key", "Show API key")
+                      }
                     >
-                      {showAiKey ? "隐藏" : "显示"}
+                      {showAiKey ? t("隐藏", "Hide") : t("显示", "Show")}
                     </button>
                   </div>
                   {hasStoredAiKey && !aiDraft.apiKey.trim() ? (
                     <div className="text-xs text-slate-500">
-                      留空则使用已保存的 Key（修改 Base URL 时需重新填写）。
+                      {t(
+                        "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                        "Leave blank to keep the saved key (re-enter if base URL changes)."
+                      )}
                     </div>
                   ) : null}
                 </label>
@@ -1371,32 +1659,71 @@ export default function App() {
                     onClick={saveAiConfig}
                     className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
                   >
-                    保存配置
+                    {t("保存配置", "Save")}
                   </button>
                   <button
                     type="button"
                     onClick={resetAiConfig}
                     className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
                   >
-                    恢复默认
+                    {t("恢复默认", "Restore defaults")}
                   </button>
-                  <div className="text-xs text-slate-500">
-                    提示：Anthropic 请填写官方 base URL 与模型名称。
-                  </div>
+                  <button
+                    type="button"
+                    onClick={handleExportAiConfig}
+                    className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                  >
+                    {t("导出 AI 配置", "Export AI config")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={openAiImportDialog}
+                    className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                  >
+                    {t("导入 AI 配置", "Import AI config")}
+                  </button>
+                </div>
+                <div className="text-xs text-slate-500">
+                  {t(
+                    "导出包含密钥，请勿分享或上传到公开位置。",
+                    "Exports include API keys. Do not share or upload publicly."
+                  )}
+                </div>
+                <div className="text-xs text-slate-500">
+                  {t(
+                    "AI 配置导入导出与收藏备份分开管理。",
+                    "AI config import/export is separate from bookmarks backup."
+                  )}
+                </div>
+                <input
+                  ref={aiImportInputRef}
+                  type="file"
+                  accept="application/json"
+                  className="hidden"
+                  onChange={handleImportAiConfig}
+                />
+                <div className="text-xs text-slate-500">
+                  {t(
+                    "提示：Anthropic 请填写官方 base URL 与模型名称。",
+                    "Note: Anthropic requires the official base URL and model name."
+                  )}
                 </div>
 
                 <div className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold text-slate-900">
-                        Exa 内容解析
+                        {t("Exa 内容解析", "Exa content parsing")}
                       </div>
                       <p className="mt-1 text-xs text-slate-500">
-                        使用 Exa /contents 直接获取正文，减少 HTML 解析与 token 消耗。
+                        {t(
+                          "使用 Exa /contents 直接获取正文，减少 HTML 解析与 token 消耗。",
+                          "Use Exa /contents to fetch clean text and reduce tokens."
+                        )}
                       </p>
                     </div>
                     <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
-                      可选
+                      {t("可选", "Optional")}
                     </span>
                   </div>
                   <div className="mt-4 space-y-3">
@@ -1412,7 +1739,10 @@ export default function App() {
                             setExaExpanded(nextEnabled);
                           }}
                         />
-                        启用 Exa 内容解析（失败则回退本地解析）
+                        {t(
+                          "启用 Exa 内容解析（失败则回退本地解析）",
+                          "Enable Exa parsing (fallback to local on failure)."
+                        )}
                       </label>
                       <button
                         type="button"
@@ -1421,7 +1751,7 @@ export default function App() {
                         aria-expanded={exaExpanded}
                         aria-controls="exa-config-panel"
                       >
-                        {exaExpanded ? "收起配置" : "展开配置"}
+                        {exaExpanded ? t("收起配置", "Collapse") : t("展开配置", "Expand")}
                         <ChevronDownIcon
                           className={clsx(
                             "transition",
@@ -1433,7 +1763,7 @@ export default function App() {
                     {exaExpanded ? (
                       <div className="space-y-3">
                         <label className="space-y-2">
-                          <FieldLabel label="Exa Base URL" />
+                          <FieldLabel label={t("Exa Base URL", "Exa base URL")} />
                           <input
                             className="input-field w-full"
                             value={exaDraft.baseUrl}
@@ -1443,7 +1773,7 @@ export default function App() {
                           />
                         </label>
                         <label className="space-y-2">
-                          <FieldLabel label="Exa API Key" />
+                          <FieldLabel label={t("Exa API Key", "Exa API key")} />
                           <div className="flex flex-wrap items-center gap-2">
                             <input
                               type={showExaKey ? "text" : "password"}
@@ -1458,14 +1788,21 @@ export default function App() {
                               onClick={() => setShowExaKey((prev) => !prev)}
                               className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
                               aria-pressed={showExaKey}
-                              aria-label={showExaKey ? "隐藏 Exa API Key" : "显示 Exa API Key"}
+                              aria-label={
+                                showExaKey
+                                  ? t("隐藏 Exa API Key", "Hide Exa API key")
+                                  : t("显示 Exa API Key", "Show Exa API key")
+                              }
                             >
-                              {showExaKey ? "隐藏" : "显示"}
+                              {showExaKey ? t("隐藏", "Hide") : t("显示", "Show")}
                             </button>
                           </div>
                           {hasStoredExaKey && !exaDraft.apiKey.trim() ? (
                             <div className="text-xs text-slate-500">
-                              留空则使用已保存的 Key（修改 Base URL 时需重新填写）。
+                              {t(
+                                "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                "Leave blank to keep the saved key (re-enter if base URL changes)."
+                              )}
                             </div>
                           ) : null}
                         </label>
@@ -1475,20 +1812,23 @@ export default function App() {
                             onClick={saveExaConfig}
                             className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
                           >
-                            保存 Exa 配置
+                            {t("保存 Exa 配置", "Save Exa")}
                           </button>
                           <button
                             type="button"
                             onClick={resetExaConfig}
                             className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
                           >
-                            恢复默认
+                            {t("恢复默认", "Restore defaults")}
                           </button>
                         </div>
                       </div>
                     ) : (
                       <div className="text-xs text-slate-500">
-                        配置信息已折叠，点击“展开配置”进行修改。
+                        {t(
+                          "配置信息已折叠，点击“展开配置”进行修改。",
+                          "Settings are collapsed. Click expand to edit."
+                        )}
                       </div>
                     )}
                 </div>
@@ -1497,20 +1837,25 @@ export default function App() {
               <div className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="text-base font-semibold text-slate-900">AI 搜索配置</div>
+                    <div className="text-base font-semibold text-slate-900">
+                      {t("AI 搜索配置", "AI search settings")}
+                    </div>
                     <p className="mt-1 text-xs text-slate-500">
-                      Embedding 与 Reranker 可使用不同的供应商与密钥。
+                      {t(
+                        "Embedding 与 Reranker 可使用不同的供应商与密钥。",
+                        "Embedding and reranker can use different providers/keys."
+                      )}
                     </p>
                   </div>
                   <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
-                    搜索页
+                    {t("搜索页", "Search")}
                   </span>
                 </div>
 
                 <div className="mt-4 space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
                     <label className="space-y-2">
-                      <FieldLabel label="Embedding Provider" />
+                      <FieldLabel label={t("Embedding Provider", "Embedding provider")} />
                       <Select.Root
                         value={searchDraft.embedding.provider}
                         onValueChange={(value) =>
@@ -1526,11 +1871,11 @@ export default function App() {
                         <Select.Portal>
                           <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
                             <Select.Viewport className="p-2">
-                              {SEARCH_PROVIDER_OPTIONS.map((option) => (
+                              {searchProviderOptions.map((option) => (
                                 <Select.Item
                                   key={option.value}
                                   value={option.value}
-                                  className="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700 data-[highlighted]:bg-slate-100"
+                                  className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
                                 >
                                   <Select.ItemText>{option.label}</Select.ItemText>
                                   <Select.ItemIndicator>
@@ -1544,20 +1889,20 @@ export default function App() {
                       </Select.Root>
                     </label>
                     <label className="space-y-2">
-                      <FieldLabel label="Embedding 模型" />
+                      <FieldLabel label={t("Embedding 模型", "Embedding model")} />
                       <input
                         className="input-field w-full"
                         value={searchDraft.embedding.model}
                         onChange={(event) =>
                           setSearchField("embedding", "model", event.target.value)
                         }
-                        placeholder="例如 text-embedding-3-small"
+                        placeholder={t("例如 text-embedding-3-small", "e.g. text-embedding-3-small")}
                       />
                     </label>
                   </div>
 
                   <label className="space-y-2">
-                    <FieldLabel label="Embedding Base URL" />
+                    <FieldLabel label={t("Embedding Base URL", "Embedding base URL")} />
                     <input
                       className="input-field w-full"
                       value={searchDraft.embedding.baseUrl}
@@ -1570,7 +1915,7 @@ export default function App() {
                   </label>
 
                   <label className="space-y-2">
-                    <FieldLabel label="Embedding API Key" />
+                    <FieldLabel label={t("Embedding API Key", "Embedding API key")} />
                     <div className="flex flex-wrap items-center gap-2">
                       <input
                         type={showEmbeddingKey ? "text" : "password"}
@@ -1589,22 +1934,25 @@ export default function App() {
                         aria-pressed={showEmbeddingKey}
                         aria-label={
                           showEmbeddingKey
-                            ? "隐藏 Embedding API Key"
-                            : "显示 Embedding API Key"
+                            ? t("隐藏 Embedding API Key", "Hide embedding API key")
+                            : t("显示 Embedding API Key", "Show embedding API key")
                         }
                       >
-                        {showEmbeddingKey ? "隐藏" : "显示"}
+                        {showEmbeddingKey ? t("隐藏", "Hide") : t("显示", "Show")}
                       </button>
                     </div>
                     {hasStoredEmbeddingKey && !searchDraft.embedding.apiKey.trim() ? (
                       <div className="text-xs text-slate-500">
-                        留空则使用已保存的 Key（修改 Base URL 时需重新填写）。
+                        {t(
+                          "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                          "Leave blank to keep the saved key (re-enter if base URL changes)."
+                        )}
                       </div>
                     ) : null}
                   </label>
 
                   <label className="space-y-2">
-                    <FieldLabel label="AI 匹配下限" />
+                    <FieldLabel label={t("AI 匹配下限", "AI match threshold")} />
                     <div className="flex flex-wrap items-center gap-3">
                       <input
                         type="range"
@@ -1630,7 +1978,10 @@ export default function App() {
                       />
                     </div>
                     <div className="text-xs text-slate-500">
-                      低于该相似度的结果会被过滤。
+                      {t(
+                        "低于该相似度的结果会被过滤。",
+                        "Results below this similarity are filtered out."
+                      )}
                     </div>
                   </label>
 
@@ -1643,14 +1994,16 @@ export default function App() {
                           checked={searchDraft.rerank.enabled}
                           onChange={(event) => setRerankEnabled(event.target.checked)}
                         />
-                        启用 Reranker
+                        {t("启用 Reranker", "Enable reranker")}
                       </label>
-                      <span className="text-xs text-slate-500">启用后用于二次排序</span>
+                      <span className="text-xs text-slate-500">
+                        {t("启用后用于二次排序", "Use for second-pass sorting")}
+                      </span>
                     </div>
                     <div className="mt-4 space-y-3">
                       <div className="grid gap-4 md:grid-cols-2">
                         <label className="space-y-2">
-                          <FieldLabel label="Reranker Provider" />
+                          <FieldLabel label={t("Reranker Provider", "Reranker provider")} />
                           <Select.Root
                             value={searchDraft.rerank.provider}
                             onValueChange={(value) =>
@@ -1666,11 +2019,11 @@ export default function App() {
                             <Select.Portal>
                               <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
                                 <Select.Viewport className="p-2">
-                                  {SEARCH_PROVIDER_OPTIONS.map((option) => (
+                                  {searchProviderOptions.map((option) => (
                                     <Select.Item
                                       key={option.value}
                                       value={option.value}
-                                      className="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700 data-[highlighted]:bg-slate-100"
+                                      className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
                                     >
                                       <Select.ItemText>{option.label}</Select.ItemText>
                                       <Select.ItemIndicator>
@@ -1684,19 +2037,19 @@ export default function App() {
                           </Select.Root>
                         </label>
                         <label className="space-y-2">
-                          <FieldLabel label="Reranker 模型" />
+                          <FieldLabel label={t("Reranker 模型", "Reranker model")} />
                           <input
                             className="input-field w-full"
                             value={searchDraft.rerank.model}
                             onChange={(event) =>
                               setSearchField("rerank", "model", event.target.value)
                             }
-                            placeholder="例如 rerank-lite"
+                            placeholder={t("例如 rerank-lite", "e.g. rerank-lite")}
                           />
                         </label>
                       </div>
                       <label className="space-y-2">
-                        <FieldLabel label="Reranker Base URL" />
+                        <FieldLabel label={t("Reranker Base URL", "Reranker base URL")} />
                         <input
                           className="input-field w-full"
                           value={searchDraft.rerank.baseUrl}
@@ -1708,7 +2061,7 @@ export default function App() {
                         />
                       </label>
                       <label className="space-y-2">
-                        <FieldLabel label="Reranker API Key" />
+                        <FieldLabel label={t("Reranker API Key", "Reranker API key")} />
                         <div className="flex flex-wrap items-center gap-2">
                           <input
                             type={showRerankKey ? "text" : "password"}
@@ -1727,16 +2080,19 @@ export default function App() {
                             aria-pressed={showRerankKey}
                             aria-label={
                               showRerankKey
-                                ? "隐藏 Reranker API Key"
-                                : "显示 Reranker API Key"
+                                ? t("隐藏 Reranker API Key", "Hide reranker API key")
+                                : t("显示 Reranker API Key", "Show reranker API key")
                             }
                           >
-                            {showRerankKey ? "隐藏" : "显示"}
+                            {showRerankKey ? t("隐藏", "Hide") : t("显示", "Show")}
                           </button>
                         </div>
                         {hasStoredRerankKey && !searchDraft.rerank.apiKey.trim() ? (
                           <div className="text-xs text-slate-500">
-                            留空则使用已保存的 Key（修改 Base URL 时需重新填写）。
+                            {t(
+                              "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                              "Leave blank to keep the saved key (re-enter if base URL changes)."
+                            )}
                           </div>
                         ) : null}
                       </label>
@@ -1749,14 +2105,14 @@ export default function App() {
                       onClick={saveSearchConfig}
                       className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
                     >
-                      保存搜索配置
+                      {t("保存搜索配置", "Save search settings")}
                     </button>
                     <button
                       type="button"
                       onClick={resetSearchConfig}
                       className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
                     >
-                      恢复默认
+                      {t("恢复默认", "Restore defaults")}
                     </button>
                   </div>
                 </div>
@@ -1770,25 +2126,25 @@ export default function App() {
       <Dialog.Root open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/30" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-6">
+          <Dialog.Content className="fixed left-1/2 top-1/2 w-[90vw] max-w-md translate-center rounded-3xl bg-white p-6">
             <Dialog.Title className="text-lg font-semibold text-slate-900">
-              {editingCategory ? "编辑分类" : "新增分类"}
+              {editingCategory ? t("编辑分类", "Edit category") : t("新增分类", "Add category")}
             </Dialog.Title>
             <Dialog.Description className="mt-2 text-sm text-slate-600">
-              命名分类并选择一个醒目的颜色。
+              {t("命名分类并选择一个醒目的颜色。", "Name the category and pick a color.")}
             </Dialog.Description>
             <div className="mt-4 space-y-3">
               <label className="space-y-2">
-                <FieldLabel label="分类名称" />
+                <FieldLabel label={t("分类名称", "Category name")} />
                 <input
                   className="input-field w-full"
                   value={categoryName}
                   onChange={(event) => setCategoryName(event.target.value)}
-                  placeholder="例如 科学技术"
+                  placeholder={t("例如 科学技术", "e.g. Technology")}
                 />
               </label>
               <div className="space-y-2">
-                <FieldLabel label="分类颜色" />
+                <FieldLabel label={t("分类颜色", "Category color")} />
                 <div className="flex flex-wrap gap-2">
                   {COLOR_PALETTE.map((color) => (
                     <button
@@ -1800,7 +2156,7 @@ export default function App() {
                         color.className,
                         categoryColor === color.className ? "border-slate-900" : "border-transparent"
                       )}
-                      aria-label={`选择颜色 ${color.id}`}
+                      aria-label={t("选择颜色 {id}", "Select color {id}", { id: color.id })}
                     />
                   ))}
                 </div>
@@ -1808,14 +2164,14 @@ export default function App() {
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <Dialog.Close className="outline-button rounded-full px-4 py-2 text-sm font-semibold">
-                取消
+                {t("取消", "Cancel")}
               </Dialog.Close>
               <button
                 type="button"
                 onClick={saveCategory}
                 className="gradient-button rounded-full px-4 py-2 text-sm font-semibold"
               >
-                保存
+                {t("保存", "Save")}
               </button>
             </div>
           </Dialog.Content>
@@ -1825,14 +2181,16 @@ export default function App() {
       <Dialog.Root open={ruleDialogOpen} onOpenChange={setRuleDialogOpen}>
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 bg-black/30" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[90vw] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white p-6">
-            <Dialog.Title className="text-lg font-semibold text-slate-900">新增规则</Dialog.Title>
+          <Dialog.Content className="fixed left-1/2 top-1/2 w-[90vw] max-w-md translate-center rounded-3xl bg-white p-6">
+            <Dialog.Title className="text-lg font-semibold text-slate-900">
+              {t("新增规则", "Add rule")}
+            </Dialog.Title>
             <Dialog.Description className="mt-2 text-sm text-slate-600">
-              输入域名并选择目标分类。
+              {t("输入域名并选择目标分类。", "Enter a domain and choose a category.")}
             </Dialog.Description>
             <div className="mt-4 space-y-3">
               <label className="space-y-2">
-                <FieldLabel label="域名" />
+                <FieldLabel label={t("域名", "Domain")} />
                 <input
                   className="input-field w-full"
                   value={ruleDomain}
@@ -1841,7 +2199,7 @@ export default function App() {
                 />
               </label>
               <label className="space-y-2">
-                <FieldLabel label="目标分类" />
+                <FieldLabel label={t("目标分类", "Target category")} />
                 <Select.Root value={ruleCategoryId} onValueChange={setRuleCategoryId}>
                   <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
                     <Select.Value />
@@ -1856,7 +2214,7 @@ export default function App() {
                           <Select.Item
                             key={category.id}
                             value={category.id}
-                            className="flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700 data-[highlighted]:bg-slate-100"
+                            className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
                           >
                             <Select.ItemText>{category.name}</Select.ItemText>
                             <Select.ItemIndicator>
@@ -1872,14 +2230,14 @@ export default function App() {
             </div>
             <div className="mt-6 flex justify-end gap-3">
               <Dialog.Close className="outline-button rounded-full px-4 py-2 text-sm font-semibold">
-                取消
+                {t("取消", "Cancel")}
               </Dialog.Close>
               <button
                 type="button"
                 onClick={saveRule}
                 className="gradient-button rounded-full px-4 py-2 text-sm font-semibold"
               >
-                保存规则
+                {t("保存规则", "Save rule")}
               </button>
             </div>
           </Dialog.Content>

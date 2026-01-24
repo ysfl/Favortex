@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:chromium": "BUILD_TARGET=chromium vite build --mode chromium",
     "build:debug": "vite build --mode debug",
     "build:debug:firefox": "npm run build:debug && node scripts/prepare-firefox.cjs artifacts/dist-debug artifacts/dist-debug-firefox",
+    "build:firefox": "BUILD_TARGET=firefox vite build --mode firefox && node scripts/prepare-firefox.cjs artifacts/dist-firefox-src artifacts/dist-firefox",
     "build:ext": "npm run build && node scripts/package.cjs",
     "package": "node scripts/package.cjs",
     "typecheck": "tsc --noEmit",

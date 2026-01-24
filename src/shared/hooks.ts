@@ -33,6 +33,32 @@ export function useAppState() {
     document.documentElement.dataset.theme = theme;
   }, [state?.theme]);
 
+  useEffect(() => {
+    const mode = state?.ui.colorMode ?? "system";
+    const root = document.documentElement;
+    const media =
+      typeof window !== "undefined" && "matchMedia" in window
+        ? window.matchMedia("(prefers-color-scheme: dark)")
+        : null;
+    const apply = (isDark: boolean) => {
+      root.dataset.mode = isDark ? "dark" : "light";
+      root.style.colorScheme = isDark ? "dark" : "light";
+    };
+
+    if (mode === "system") {
+      apply(media?.matches ?? false);
+      if (media) {
+        const handler = (event: MediaQueryListEvent) => apply(event.matches);
+        media.addEventListener("change", handler);
+        return () => media.removeEventListener("change", handler);
+      }
+      return undefined;
+    }
+
+    apply(mode === "dark");
+    return undefined;
+  }, [state?.ui.colorMode]);
+
   const update = useCallback(async (updater: (state: AppState) => AppState) => {
     const next = await updateState(updater);
     setState(next);

@@ -7,7 +7,16 @@ const artifactsDir = resolve(__dirname, "artifacts");
 
 export default defineConfig(({ mode }) => {
   const isDebug = mode === "debug" || process.env.BUILD_UNMINIFIED === "true";
-  const outDir = resolve(artifactsDir, isDebug ? "dist-debug" : "dist");
+  const isChromium = mode === "chromium";
+  const isFirefox = mode === "firefox";
+  const outDirName = isDebug
+    ? "dist-debug"
+    : isChromium
+      ? "dist-chromium"
+      : isFirefox
+        ? "dist-firefox-src"
+        : "dist";
+  const outDir = resolve(artifactsDir, outDirName);
   return {
     root: rootDir,
     publicDir: resolve(__dirname, "public"),

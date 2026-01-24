@@ -1,13 +1,11 @@
-import {
-  ClipboardCopyIcon,
-  MagnifyingGlassIcon
-} from "@radix-ui/react-icons";
+import { ClipboardCopyIcon } from "@radix-ui/react-icons";
 import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { answerWithAi, embedTexts, rerankTexts } from "../shared/ai";
 import { useAppState } from "../shared/hooks";
 import type { Bookmark } from "../shared/types";
 import { buildEmbeddingFingerprint, getDomain, sanitizeText, truncateText } from "../shared/utils";
+import { useI18n } from "../shared/i18n";
 
 const AI_SEARCH_TOP_K = 40;
 const AI_DOC_MAX_CHARS = 800;
@@ -49,6 +47,7 @@ function buildSearchText(bookmark: Bookmark) {
 
 export default function App() {
   const { state, update } = useAppState();
+  const { t, locale } = useI18n();
   const [query, setQuery] = useState("");
   const [mode, setMode] = useState<SearchMode>("classic");
   const [results, setResults] = useState<Bookmark[]>([]);
@@ -95,13 +94,10 @@ export default function App() {
     }, 2400);
   }, []);
 
-  const getPreferredLanguage = useCallback(() => {
-    try {
-      return chrome.i18n.getUILanguage();
-    } catch {
-      return navigator.language || "en";
-    }
-  }, []);
+  const getPreferredLanguage = useCallback(
+    () => (locale === "zh" ? "zh-CN" : "en"),
+    [locale]
+  );
 
   const ensureEmbeddings = useCallback(
     async (bookmarks: Bookmark[]) => {
@@ -185,7 +181,7 @@ export default function App() {
       }
       const { embedding, rerank, minScore } = state.search;
       if (!embedding.baseUrl || !embedding.apiKey || !embedding.model) {
-        throw new Error("请先配置 Embedding 模型与 Key");
+        throw new Error(t("请先配置 Embedding 模型与 Key", "Configure embedding model and key."));
       }
       const fingerprint = buildEmbeddingFingerprint(embedding);
       const bookmarks = await ensureEmbeddings(state.bookmarks);
@@ -223,7 +219,7 @@ export default function App() {
 
       if (rerank.enabled) {
         if (!rerank.baseUrl || !rerank.apiKey || !rerank.model) {
-          throw new Error("请先配置 Reranker 模型与 Key");
+          throw new Error(t("请先配置 Reranker 模型与 Key", "Configure reranker model and key."));
         }
         const rerankDocs = orderedIndices.map((index) => buildSearchText(bookmarks[index]));
         const reranked = await rerankTexts(rerank, term, rerankDocs);
@@ -234,18 +230,21 @@ export default function App() {
 
       return orderedIndices.map((index) => bookmarks[index]);
     },
-    [ensureEmbeddings, state]
+    [ensureEmbeddings, state, t]
   );
 
   const performSearch = useCallback(
     async (overrideQuery?: string, overrideMode?: SearchMode) => {
       const term = (overrideQuery ?? query).trim();
       if (!term) {
-        setTransientStatus("请输入搜索内容", "error");
+        setTransientStatus(t("请输入搜索内容", "Enter a search query."), "error");
         return;
       }
       if (!state) {
-        setTransientStatus("正在加载收藏数据，请稍后重试。", "error");
+        setTransientStatus(
+          t("正在加载收藏数据，请稍后重试。", "Bookmarks are loading. Try again shortly."),
+          "error"
+        );
         return;
       }
       const activeMode = overrideMode ?? mode;
@@ -257,24 +256,24 @@ export default function App() {
           const next = runClassicSearch(term);
           setResults(next);
           if (!next.length) {
-            setTransientStatus("没有找到匹配结果", "error");
+            setTransientStatus(t("没有找到匹配结果", "No matches found."), "error");
           }
         } else {
           const next = await runAiSearch(term);
           setResults(next);
           if (!next.length) {
-            setTransientStatus("AI 未找到匹配结果", "error");
+            setTransientStatus(t("AI 未找到匹配结果", "AI found no matches."), "error");
           }
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "搜索失败";
+        const message = error instanceof Error ? error.message : t("搜索失败", "Search failed.");
         setResults([]);
         setTransientStatus(message, "error");
       } finally {
         setBusy(false);
       }
     },
-    [mode, query, runAiSearch, runClassicSearch, setTransientStatus, state]
+    [mode, query, runAiSearch, runClassicSearch, setTransientStatus, state, t]
   );
 
   const handleModeChange = useCallback(
@@ -312,15 +311,18 @@ export default function App() {
       return;
     }
     if (!state) {
-      setTransientStatus("正在加载收藏数据，请稍后重试。", "error");
+      setTransientStatus(
+        t("正在加载收藏数据，请稍后重试。", "Bookmarks are loading. Try again shortly."),
+        "error"
+      );
       return;
     }
     if (!results.length) {
-      setTransientStatus("请先搜索获取结果", "error");
+      setTransientStatus(t("请先搜索获取结果", "Search first to get results."), "error");
       return;
     }
     if (!state.ai.apiKey || !state.ai.baseUrl || !state.ai.model) {
-      setTransientStatus("请先配置 AI 服务", "error");
+      setTransientStatus(t("请先配置 AI 服务", "Configure AI service first."), "error");
       return;
     }
     setChatInput("");
@@ -350,14 +352,20 @@ export default function App() {
       const reply = await answerWithAi(state.ai, system, userPrompt);
       setChatMessages((prev) => [
         ...prev,
-        { role: "assistant", content: reply || "抱歉，我没有找到相关信息。" }
+        {
+          role: "assistant",
+          content: reply || t("抱歉，我没有找到相关信息。", "Sorry, I couldn't find that.")
+        }
       ]);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "AI 回答失败";
+      const message = error instanceof Error ? error.message : t("AI 回答失败", "AI response failed.");
       setTransientStatus(message, "error");
       setChatMessages((prev) => [
         ...prev,
-        { role: "assistant", content: "抱歉，回答失败，请稍后再试。" }
+        {
+          role: "assistant",
+          content: t("抱歉，回答失败，请稍后再试。", "Sorry, please try again later.")
+        }
       ]);
     } finally {
       setChatBusy(false);
@@ -370,19 +378,20 @@ export default function App() {
     getPreferredLanguage,
     results,
     setTransientStatus,
-    state
+    state,
+    t
   ]);
 
   const copyUrl = useCallback(
     async (url: string) => {
       try {
         await navigator.clipboard.writeText(url);
-        setTransientStatus("链接已复制", "success");
+        setTransientStatus(t("链接已复制", "Link copied"), "success");
       } catch {
-        setTransientStatus("复制失败", "error");
+        setTransientStatus(t("复制失败", "Copy failed"), "error");
       }
     },
-    [setTransientStatus]
+    [setTransientStatus, t]
   );
 
   const hasResults = hasSearched && results.length > 0;
@@ -393,10 +402,15 @@ export default function App() {
       <div className={containerClass}>
         <header className={clsx("space-y-3", hasResults ? "text-left" : "text-center")}>
           <div className={clsx("space-y-1", hasResults ? "" : "items-center")}>
-            <span className="chip inline-flex">Search</span>
-            <h1 className="text-3xl font-semibold text-slate-900">Favortex 搜索</h1>
+            <span className="chip inline-flex">{t("搜索", "Search")}</span>
+            <h1 className="text-3xl font-semibold text-slate-900">
+              {t("Favortex 搜索", "Favortex Search")}
+            </h1>
             <p className="text-sm text-slate-600">
-              传统检索或 AI 搜索，快速找回收藏。
+              {t(
+                "传统检索或 AI 搜索，快速找回收藏。",
+                "Classic or AI search to quickly find your saves."
+              )}
             </p>
           </div>
         </header>
@@ -406,8 +420,8 @@ export default function App() {
             <div className="flex flex-wrap items-center gap-2">
               {(
                 [
-                  { value: "classic", label: "传统检索" },
-                  { value: "ai", label: "AI 检索" }
+                  { value: "classic", label: t("传统检索", "Classic search") },
+                  { value: "ai", label: t("AI 检索", "AI search") }
                 ] as const
               ).map((option) => (
                 <button
@@ -425,40 +439,37 @@ export default function App() {
             </div>
 
             <div className="flex flex-col gap-3 md:flex-row md:items-center">
-              <div className="flex w-full flex-1 items-center gap-2 rounded-2xl border border-white/70 bg-white/80 px-4 py-3">
-                <MagnifyingGlassIcon className="text-slate-400" />
-                <input
-                  ref={inputRef}
-                  type="search"
-                  className="w-full bg-transparent text-base text-slate-900 outline-none"
-                  placeholder="输入关键词、网址或摘要"
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      void performSearch();
-                    }
-                  }}
-                />
-              </div>
+              <input
+                ref={inputRef}
+                type="search"
+                className="input-field w-full flex-1"
+                placeholder={t("输入关键词、网址或摘要", "Search by keyword, URL, or summary")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    void performSearch();
+                  }
+                }}
+              />
               <button
                 type="button"
                 onClick={() => void performSearch()}
                 disabled={busy || !state}
                 className={clsx(
                   "gradient-button inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition",
-                  busy || !state ? "opacity-70" : "hover:-translate-y-0.5"
+                  busy || !state ? "opacity-70" : "lift-on-hover"
                 )}
               >
-                {busy ? "搜索中..." : "开始搜索"}
+                {busy ? t("搜索中...", "Searching...") : t("开始搜索", "Search")}
               </button>
             </div>
           </div>
         </div>
 
         {hasResults ? (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
+          <div className="grid grid-two-pane gap-4">
             <div className="space-y-4">
               {results.map((bookmark) => {
                 const favicon = bookmark.favicon || fallbackIcon;
@@ -502,8 +513,8 @@ export default function App() {
                         type="button"
                         onClick={() => void copyUrl(bookmark.url)}
                         className="icon-button"
-                        aria-label="复制链接"
-                        title="复制链接"
+                        aria-label={t("复制链接", "Copy link")}
+                        title={t("复制链接", "Copy link")}
                       >
                         <ClipboardCopyIcon />
                       </button>
@@ -514,7 +525,9 @@ export default function App() {
             </div>
 
             <div className="flex h-full flex-col rounded-3xl border border-white/70 bg-white/80 p-5">
-              <div className="text-sm font-semibold text-slate-800">AI 问答</div>
+              <div className="text-sm font-semibold text-slate-800">
+                {t("AI 问答", "AI Q&A")}
+              </div>
               <div className="mt-4 flex-1 space-y-3 overflow-y-auto pr-1">
                 {chatMessages.length ? (
                   chatMessages.map((message, index) => (
@@ -532,12 +545,12 @@ export default function App() {
                   ))
                 ) : (
                   <div className="text-sm text-slate-500">
-                    基于当前搜索结果进行提问。
+                    {t("基于当前搜索结果进行提问。", "Ask questions based on the results.")}
                   </div>
                 )}
                 {chatBusy ? (
                   <div className="rounded-2xl bg-white px-4 py-3 text-sm text-slate-500">
-                    AI 正在整理答案...
+                    {t("AI 正在整理答案...", "AI is composing an answer...")}
                   </div>
                 ) : null}
               </div>
@@ -545,7 +558,7 @@ export default function App() {
                 <input
                   type="text"
                   className="input-field w-full"
-                  placeholder="基于搜索结果继续提问"
+                  placeholder={t("基于搜索结果继续提问", "Ask a follow-up question")}
                   value={chatInput}
                   onChange={(event) => setChatInput(event.target.value)}
                   disabled={chatBusy}
@@ -565,14 +578,17 @@ export default function App() {
                     chatBusy ? "opacity-70" : ""
                   )}
                 >
-                  {chatBusy ? "处理中..." : "发送"}
+                  {chatBusy ? t("处理中...", "Working...") : t("发送", "Send")}
                 </button>
               </div>
             </div>
           </div>
         ) : hasSearched ? (
           <div className="rounded-2xl border border-white/70 bg-white/80 px-6 py-8 text-center text-sm text-slate-500">
-            暂无匹配结果，尝试更换关键词或切换搜索模式。
+            {t(
+              "暂无匹配结果，尝试更换关键词或切换搜索模式。",
+              "No matches yet. Try another query or switch search mode."
+            )}
           </div>
         ) : null}
       </div>

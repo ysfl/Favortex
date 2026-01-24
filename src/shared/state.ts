@@ -1,11 +1,12 @@
 import type { AppState, Category, ExaConfig, SearchConfig, SearchProvider } from "./types";
 import { DEFAULT_THEME_ID, isThemeId } from "./theme";
+import { translate } from "./i18n";
 
 export const DEFAULT_CATEGORY_ID = "inbox";
 
 const DEFAULT_CATEGORY: Category = {
   id: DEFAULT_CATEGORY_ID,
-  name: "未分类",
+  name: translate("未分类", "Inbox"),
   color: "bg-teal-600",
   createdAt: Date.now()
 };
@@ -28,7 +29,8 @@ export const DEFAULT_STATE: AppState = {
     model: "gpt-4o-mini"
   },
   ui: {
-    compactMode: false
+    compactMode: false,
+    colorMode: "system"
   },
   search: {
     embedding: {
@@ -84,7 +86,11 @@ export function normalizeState(value?: Partial<AppState>): AppState {
     compactMode:
       typeof rawUi.compactMode === "boolean"
         ? rawUi.compactMode
-        : DEFAULT_STATE.ui.compactMode
+        : DEFAULT_STATE.ui.compactMode,
+    colorMode:
+      rawUi.colorMode === "light" || rawUi.colorMode === "dark" || rawUi.colorMode === "system"
+        ? rawUi.colorMode
+        : DEFAULT_STATE.ui.colorMode
   };
   const rawSearch: Partial<SearchConfig> =
     typeof value?.search === "object" && value?.search ? value.search : {};
