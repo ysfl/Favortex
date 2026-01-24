@@ -57,5 +57,8 @@ npm run build:debug:firefox
 ## Privacy
 Data is stored locally in the extension storage. AI/Exa requests are sent only to the endpoints you configure.
 
+## License
+GPL-3.0-only. See [LICENSE](LICENSE).
+
 ## Release
 The GitHub Actions workflow builds packages on tag push or manual dispatch. Use tags like `v1.0.0` to trigger a release build.

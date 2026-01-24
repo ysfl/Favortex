@@ -57,5 +57,8 @@ npm run build:debug:firefox
 ## 隐私
 数据保存在扩展本地存储中；AI/Exa 请求仅发送到你配置的服务地址。
 
+## 许可证
+GPL-3.0-only，详见 [LICENSE](LICENSE)。
+
 ## 发布
 GitHub Actions 在标签推送或手动触发时构建产物，使用 `v1.0.0` 之类的标签触发发布构建。
