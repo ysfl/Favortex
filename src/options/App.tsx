@@ -1,5 +1,4 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import * as Accordion from "@radix-ui/react-accordion";
 import * as Select from "@radix-ui/react-select";
 import * as Tabs from "@radix-ui/react-tabs";
 import {
@@ -140,13 +139,11 @@ export default function App() {
   const { state, update } = useAppState();
   const { t, locale } = useI18n();
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
-  const [ruleDialogOpen, setRuleDialogOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [categoryName, setCategoryName] = useState("");
   const [categoryColor, setCategoryColor] = useState(COLOR_PALETTE[0].className);
   const [ruleType, setRuleType] = useState<Rule["type"]>("domain");
   const [ruleValue, setRuleValue] = useState("");
-  const [ruleCategoryId, setRuleCategoryId] = useState(DEFAULT_CATEGORY_ID);
   const [aiDraft, setAiDraft] = useState(DEFAULT_STATE.ai);
   const [exaDraft, setExaDraft] = useState(DEFAULT_STATE.exa);
   const [searchDraft, setSearchDraft] = useState(DEFAULT_STATE.search);
@@ -336,6 +333,8 @@ export default function App() {
       setCategoryName("");
       setCategoryColor(COLOR_PALETTE[0].className);
     }
+    setRuleType("domain");
+    setRuleValue("");
     setCategoryDialogOpen(true);
   };
 
@@ -416,17 +415,14 @@ export default function App() {
     setTransientStatus(t("已删除分类", "Category deleted."));
   };
 
-  const openRuleDialog = useCallback(
-    (categoryId: string) => {
-      setRuleCategoryId(categoryMap.has(categoryId) ? categoryId : DEFAULT_CATEGORY_ID);
-      setRuleType("domain");
-      setRuleValue("");
-      setRuleDialogOpen(true);
-    },
-    [categoryMap]
-  );
-
   const saveRule = async () => {
+    if (!editingCategory) {
+      setTransientStatus(
+        t("请先保存分类再添加规则", "Save the category before adding rules."),
+        "error"
+      );
+      return;
+    }
     const rawValue = ruleValue.trim();
     if (!rawValue) {
       const message =
@@ -439,13 +435,14 @@ export default function App() {
       return;
     }
     const normalizedValue = ruleType === "domain" ? rawValue.toLowerCase() : rawValue;
+    const targetCategoryId = editingCategory.id;
     const nextRuleId = createId();
     const nextCreatedAt = Date.now();
     const hasDuplicate = state?.rules.some((rule) => {
       if (rule.type !== ruleType) {
         return false;
       }
-      if (rule.type === "natural" && rule.categoryId !== ruleCategoryId) {
+      if (rule.type === "natural" && rule.categoryId !== targetCategoryId) {
         return false;
       }
       const current =
@@ -471,15 +468,14 @@ export default function App() {
               id: nextRuleId,
               type: ruleType,
               value: normalizedValue,
-              categoryId: categoryMap.has(ruleCategoryId)
-                ? ruleCategoryId
+              categoryId: categoryMap.has(targetCategoryId)
+                ? targetCategoryId
                 : DEFAULT_CATEGORY_ID,
               createdAt: nextCreatedAt
             }
           ]
     }));
     setRuleValue("");
-    setRuleDialogOpen(false);
     setTransientStatus(t("已新增规则", "Rule added."));
   };
 
@@ -1273,12 +1269,18 @@ export default function App() {
                 <PlusIcon /> {t("新增分类", "Add category")}
               </button>
             </div>
+            <div className="rounded-2xl border border-white/60 bg-white/80 px-3 py-2 text-xs text-slate-500">
+              {t(
+                "域名与 URL 前缀规则会跳过 AI 分类；自然语言规则用于提示 AI。",
+                "Domain/URL prefix rules bypass AI. Natural rules guide AI classification."
+              )}
+            </div>
             {!state ? (
               <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-6 text-center text-sm text-slate-500">
                 {t("正在加载分类...", "Loading categories...")}
               </div>
             ) : (
-              <Accordion.Root type="multiple" className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-2">
                 {sortedCategories.map((category) => {
                   const rules = rulesByCategory.get(category.id) ?? [];
                   const domainRules = rules.filter((rule) => rule.type === "domain");
@@ -1304,30 +1306,21 @@ export default function App() {
                     summaryParts.length > 0
                       ? summaryParts.join(" · ")
                       : t("暂无规则", "No rules yet");
-                  const orderedRules = [...rules].sort((a, b) => {
-                    const rank = { domain: 0, urlPrefix: 1, natural: 2 } as const;
-                    if (rank[a.type] !== rank[b.type]) {
-                      return rank[a.type] - rank[b.type];
-                    }
-                    return b.createdAt - a.createdAt;
-                  });
                   return (
-                    <Accordion.Item
+                    <div
                       key={category.id}
-                      value={category.id}
-                      className="rounded-3xl border border-white/60 bg-white/80"
+                      className="rounded-3xl border border-white/60 bg-white/80 px-4 py-4"
                     >
-                      <Accordion.Header className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                        <Accordion.Trigger className="group flex flex-1 items-center justify-between gap-3 text-left">
-                          <span className="flex min-w-0 flex-1 items-center gap-2">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 space-y-1">
+                          <div className="flex min-w-0 items-center gap-2">
                             <span className={clsx("h-2.5 w-2.5 rounded-full", category.color)} />
                             <span className="truncate text-sm font-semibold text-slate-800">
                               {category.name}
                             </span>
-                            <span className="text-xs font-normal text-slate-500">{summary}</span>
-                          </span>
-                          <ChevronDownIcon className="text-slate-500 transition group-data-[state=open]:rotate-180" />
-                        </Accordion.Trigger>
+                          </div>
+                          <div className="text-xs text-slate-500">{summary}</div>
+                        </div>
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -1345,68 +1338,11 @@ export default function App() {
                             {t("删除", "Delete")}
                           </button>
                         </div>
-                      </Accordion.Header>
-                      <Accordion.Content className="space-y-3 px-4 pb-4">
-                        <div className="rounded-2xl border border-white/60 bg-white/80 px-3 py-2 text-xs text-slate-500">
-                          {t(
-                            "域名与 URL 前缀规则会跳过 AI 分类；自然语言规则用于提示 AI。",
-                            "Domain/URL prefix rules bypass AI. Natural rules guide AI classification."
-                          )}
-                        </div>
-                        {orderedRules.length === 0 ? (
-                          <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4 text-sm text-slate-500">
-                            {t(
-                              "暂无规则，添加后可帮助自动归类。",
-                              "No rules yet. Add some to guide classification."
-                            )}
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            {orderedRules.map((rule) => (
-                              <div
-                                key={rule.id}
-                                className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3"
-                              >
-                                <div className="min-w-0 space-y-1">
-                                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                                    <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
-                                      {ruleTypeLabels[rule.type]}
-                                    </span>
-                                    <span>
-                                      {rule.type === "domain"
-                                        ? t("匹配域名及子域名", "Matches domain + subdomains")
-                                        : rule.type === "urlPrefix"
-                                          ? t("匹配 URL 前缀", "Matches URL prefix")
-                                          : t("AI 分类提示", "AI classification hint")}
-                                    </span>
-                                  </div>
-                                  <div className="break-all text-sm font-semibold text-slate-800">
-                                    {rule.value}
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => removeRule(rule.id)}
-                                  className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500"
-                                >
-                                  {t("删除", "Delete")}
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openRuleDialog(category.id)}
-                          className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700"
-                        >
-                          <PlusIcon /> {t("新增规则", "Add rule")}
-                        </button>
-                      </Accordion.Content>
-                    </Accordion.Item>
+                      </div>
+                    </div>
                   );
                 })}
-              </Accordion.Root>
+              </div>
             )}
           </Tabs.Content>
 
