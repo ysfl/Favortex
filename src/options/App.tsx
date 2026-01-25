@@ -2203,6 +2203,141 @@ export default function App() {
                 </div>
               </div>
             </div>
+            {editingCategory ? (
+              <div className="mt-4 space-y-3">
+                <div className="text-sm font-semibold text-slate-700">
+                  {t("分类规则", "Category rules")}
+                </div>
+                {(() => {
+                  const rules = rulesByCategory.get(editingCategory.id) ?? [];
+                  const orderedRules = [...rules].sort((a, b) => {
+                    const rank = { domain: 0, urlPrefix: 1, natural: 2 } as const;
+                    if (rank[a.type] !== rank[b.type]) {
+                      return rank[a.type] - rank[b.type];
+                    }
+                    return b.createdAt - a.createdAt;
+                  });
+                  return orderedRules.length === 0 ? (
+                    <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-3 text-sm text-slate-500">
+                      {t("暂无规则，添加后可帮助自动归类。", "No rules yet. Add some to guide classification.")}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {orderedRules.map((rule) => (
+                        <div
+                          key={rule.id}
+                          className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3"
+                        >
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                              <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] font-semibold text-slate-600">
+                                {ruleTypeLabels[rule.type]}
+                              </span>
+                              <span>
+                                {rule.type === "domain"
+                                  ? t("匹配域名及子域名", "Matches domain + subdomains")
+                                  : rule.type === "urlPrefix"
+                                    ? t("匹配 URL 前缀", "Matches URL prefix")
+                                    : t("AI 分类提示", "AI classification hint")}
+                              </span>
+                            </div>
+                            <div className="break-all text-sm font-semibold text-slate-800">
+                              {rule.value}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => removeRule(rule.id)}
+                            className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500"
+                          >
+                            {t("删除", "Delete")}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                  <div className="space-y-3">
+                    <label className="space-y-2">
+                      <FieldLabel label={t("规则类型", "Rule type")} />
+                      <Select.Root
+                        value={ruleType}
+                        onValueChange={(value) => setRuleType(value as Rule["type"])}
+                      >
+                        <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                          <Select.Value />
+                          <Select.Icon>
+                            <ChevronDownIcon />
+                          </Select.Icon>
+                        </Select.Trigger>
+                        <Select.Portal>
+                          <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                            <Select.Viewport className="p-2">
+                              {(["domain", "urlPrefix", "natural"] as const).map((value) => (
+                                <Select.Item
+                                  key={value}
+                                  value={value}
+                                  className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                >
+                                  <Select.ItemText>{ruleTypeLabels[value]}</Select.ItemText>
+                                  <Select.ItemIndicator>
+                                    <CheckIcon />
+                                  </Select.ItemIndicator>
+                                </Select.Item>
+                              ))}
+                            </Select.Viewport>
+                          </Select.Content>
+                        </Select.Portal>
+                      </Select.Root>
+                    </label>
+                    <label className="space-y-2">
+                      <FieldLabel
+                        label={
+                          ruleType === "natural"
+                            ? t("自然语言描述", "Natural language")
+                            : ruleType === "urlPrefix"
+                              ? t("URL 前缀", "URL prefix")
+                              : t("域名", "Domain")
+                        }
+                      />
+                      {ruleType === "natural" ? (
+                        <textarea
+                          className="input-field w-full min-h-[96px]"
+                          value={ruleValue}
+                          onChange={(event) => setRuleValue(event.target.value)}
+                          placeholder={t(
+                            "例如：面向开发者的开源工具",
+                            "e.g. Open-source tools for developers"
+                          )}
+                        />
+                      ) : (
+                        <input
+                          className="input-field w-full"
+                          value={ruleValue}
+                          onChange={(event) => setRuleValue(event.target.value)}
+                          placeholder={ruleType === "urlPrefix" ? "github.com/awesome" : "linux.do"}
+                        />
+                      )}
+                      <p className="text-xs text-slate-500">{ruleTypeHints[ruleType]}</p>
+                    </label>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={saveRule}
+                        className="outline-button rounded-full px-4 py-2 text-sm font-semibold"
+                      >
+                        {t("添加规则", "Add rule")}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-4 text-xs text-slate-500">
+                {t("保存分类后可添加规则。", "Save the category before adding rules.")}
+              </div>
+            )}
             <div className="mt-6 flex justify-end gap-3">
               <Dialog.Close className="outline-button rounded-full px-4 py-2 text-sm font-semibold">
                 {t("取消", "Cancel")}
@@ -2213,126 +2348,6 @@ export default function App() {
                 className="gradient-button rounded-full px-4 py-2 text-sm font-semibold"
               >
                 {t("保存", "Save")}
-              </button>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-
-      <Dialog.Root open={ruleDialogOpen} onOpenChange={setRuleDialogOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/30" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 w-[90vw] max-w-md translate-center rounded-3xl bg-white p-6">
-            <Dialog.Title className="text-lg font-semibold text-slate-900">
-              {t("新增规则", "Add rule")}
-            </Dialog.Title>
-            <Dialog.Description className="mt-2 text-sm text-slate-600">
-              {t(
-                "为分类添加域名、URL 前缀或自然语言规则。",
-                "Add a domain, URL prefix, or natural language rule."
-              )}
-            </Dialog.Description>
-            <div className="mt-4 space-y-3">
-              <label className="space-y-2">
-                <FieldLabel label={t("规则类型", "Rule type")} />
-                <Select.Root value={ruleType} onValueChange={(value) => setRuleType(value as Rule["type"])}>
-                  <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                    <Select.Value />
-                    <Select.Icon>
-                      <ChevronDownIcon />
-                    </Select.Icon>
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                      <Select.Viewport className="p-2">
-                        {(["domain", "urlPrefix", "natural"] as const).map((value) => (
-                          <Select.Item
-                            key={value}
-                            value={value}
-                            className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                          >
-                            <Select.ItemText>{ruleTypeLabels[value]}</Select.ItemText>
-                            <Select.ItemIndicator>
-                              <CheckIcon />
-                            </Select.ItemIndicator>
-                          </Select.Item>
-                        ))}
-                      </Select.Viewport>
-                    </Select.Content>
-                  </Select.Portal>
-                </Select.Root>
-              </label>
-              <label className="space-y-2">
-                <FieldLabel
-                  label={
-                    ruleType === "natural"
-                      ? t("自然语言描述", "Natural language")
-                      : ruleType === "urlPrefix"
-                        ? t("URL 前缀", "URL prefix")
-                        : t("域名", "Domain")
-                  }
-                />
-                {ruleType === "natural" ? (
-                  <textarea
-                    className="input-field w-full min-h-[96px]"
-                    value={ruleValue}
-                    onChange={(event) => setRuleValue(event.target.value)}
-                    placeholder={t("例如：面向开发者的开源工具", "e.g. Open-source tools for developers")}
-                  />
-                ) : (
-                  <input
-                    className="input-field w-full"
-                    value={ruleValue}
-                    onChange={(event) => setRuleValue(event.target.value)}
-                    placeholder={
-                      ruleType === "urlPrefix"
-                        ? "github.com/awesome"
-                        : "linux.do"
-                    }
-                  />
-                )}
-                <p className="text-xs text-slate-500">{ruleTypeHints[ruleType]}</p>
-              </label>
-              <label className="space-y-2">
-                <FieldLabel label={t("目标分类", "Target category")} />
-                <Select.Root value={ruleCategoryId} onValueChange={setRuleCategoryId}>
-                  <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                    <Select.Value />
-                    <Select.Icon>
-                      <ChevronDownIcon />
-                    </Select.Icon>
-                  </Select.Trigger>
-                  <Select.Portal>
-                    <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                      <Select.Viewport className="p-2">
-                        {sortedCategories.map((category) => (
-                          <Select.Item
-                            key={category.id}
-                            value={category.id}
-                            className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                          >
-                            <Select.ItemText>{category.name}</Select.ItemText>
-                            <Select.ItemIndicator>
-                              <CheckIcon />
-                            </Select.ItemIndicator>
-                          </Select.Item>
-                        ))}
-                      </Select.Viewport>
-                    </Select.Content>
-                  </Select.Portal>
-                </Select.Root>
-              </label>
-            </div>
-            <div className="mt-6 flex justify-end gap-3">
-              <Dialog.Close className="outline-button rounded-full px-4 py-2 text-sm font-semibold">
-                {t("取消", "Cancel")}
-              </Dialog.Close>
-              <button
-                type="button"
-                onClick={saveRule}
-                className="gradient-button rounded-full px-4 py-2 text-sm font-semibold"
-              >
-                {t("保存规则", "Save rule")}
               </button>
             </div>
           </Dialog.Content>
