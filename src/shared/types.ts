@@ -72,6 +72,13 @@ export type LogEntry = {
 export type UiPreferences = {
   compactMode: boolean;
   colorMode: "system" | "light" | "dark";
+  onboarding: {
+    categories: boolean;
+    rules: boolean;
+    ai: boolean;
+    exa: boolean;
+    embedding: boolean;
+  };
 };
 
 export type AppState = {

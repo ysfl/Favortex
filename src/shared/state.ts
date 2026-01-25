@@ -31,7 +31,14 @@ export const DEFAULT_STATE: AppState = {
   },
   ui: {
     compactMode: false,
-    colorMode: "system"
+    colorMode: "system",
+    onboarding: {
+      categories: false,
+      rules: false,
+      ai: false,
+      exa: false,
+      embedding: false
+    }
   },
   search: {
     embedding: {
@@ -91,7 +98,29 @@ export function normalizeState(value?: Partial<AppState>): AppState {
     colorMode:
       rawUi.colorMode === "light" || rawUi.colorMode === "dark" || rawUi.colorMode === "system"
         ? rawUi.colorMode
-        : DEFAULT_STATE.ui.colorMode
+        : DEFAULT_STATE.ui.colorMode,
+    onboarding: {
+      categories:
+        typeof rawUi.onboarding?.categories === "boolean"
+          ? rawUi.onboarding.categories
+          : DEFAULT_STATE.ui.onboarding.categories,
+      rules:
+        typeof rawUi.onboarding?.rules === "boolean"
+          ? rawUi.onboarding.rules
+          : DEFAULT_STATE.ui.onboarding.rules,
+      ai:
+        typeof rawUi.onboarding?.ai === "boolean"
+          ? rawUi.onboarding.ai
+          : DEFAULT_STATE.ui.onboarding.ai,
+      exa:
+        typeof rawUi.onboarding?.exa === "boolean"
+          ? rawUi.onboarding.exa
+          : DEFAULT_STATE.ui.onboarding.exa,
+      embedding:
+        typeof rawUi.onboarding?.embedding === "boolean"
+          ? rawUi.onboarding.embedding
+          : DEFAULT_STATE.ui.onboarding.embedding
+    }
   };
   const rawSearch: Partial<SearchConfig> =
     typeof value?.search === "object" && value?.search ? value.search : {};

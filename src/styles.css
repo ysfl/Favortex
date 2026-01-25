@@ -418,6 +418,46 @@ textarea:focus-visible {
   border: 1px solid #f5b7b7;
 }
 
+.tour-spotlight {
+  position: fixed;
+  border-radius: 18px;
+  border: 2px solid rgb(var(--accent) / 0.65);
+  box-shadow: 0 0 0 9999px rgba(12, 15, 20, 0.55);
+  z-index: 60;
+  pointer-events: none;
+  transition: top 0.15s ease, left 0.15s ease, width 0.15s ease,
+    height 0.15s ease;
+}
+
+.tour-tooltip {
+  position: fixed;
+  z-index: 70;
+  border-radius: 18px;
+  border: 1px solid rgb(var(--stroke));
+  background: rgb(var(--card));
+  padding: 0.75rem 0.85rem;
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.14);
+  color: rgb(var(--ink));
+}
+
+.tour-tooltip-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.tour-tooltip-message {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: rgb(var(--muted));
+}
+
+.tour-tooltip-actions {
+  margin-top: 0.65rem;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
 .markdown-body {
   color: inherit;
   line-height: 1.6;
@@ -594,7 +634,8 @@ textarea:focus-visible {
   .gradient-button,
   .outline-button,
   .theme-swatch,
-  .input-field {
+  .input-field,
+  .tour-spotlight {
     transition: none;
   }
 }

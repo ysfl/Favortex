@@ -171,6 +171,15 @@ export default function App() {
   const [showRerankKey, setShowRerankKey] = useState(false);
   const [embeddingExpanded, setEmbeddingExpanded] = useState(false);
   const [rerankExpanded, setRerankExpanded] = useState(false);
+  const [tourTarget, setTourTarget] = useState<string | null>(null);
+  const [tourRect, setTourRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [tourTitle, setTourTitle] = useState("");
+  const [tourMessage, setTourMessage] = useState("");
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const aiImportInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
@@ -1196,6 +1205,142 @@ export default function App() {
     [t]
   );
 
+  const tourConfig = useMemo(
+    () => ({
+      "categories-add": {
+        title: t("新增分类", "Add a category"),
+        message: t("点击这里创建第一个分类。", "Click here to create your first category."),
+        tab: "categories" as SettingsTab
+      },
+      "rules-edit": {
+        title: t("添加规则", "Add rules"),
+        message: t(
+          "点这里进入编辑，添加域名/前缀/自然语言规则。",
+          "Click to edit and add domain/prefix/natural rules."
+        ),
+        tab: "categories" as SettingsTab
+      },
+      "ai-config": {
+        title: t("配置 AI 模型", "Configure AI model"),
+        message: t(
+          "填写模型、Base URL 和 Key。",
+          "Provide model, base URL, and API key."
+        ),
+        tab: "ai" as SettingsTab
+      },
+      "exa-config": {
+        title: t("启用 Exa", "Enable Exa"),
+        message: t(
+          "开启后可获取更干净的页面正文。",
+          "Enable to fetch cleaner page content."
+        ),
+        tab: "ai" as SettingsTab
+      },
+      "embedding-config": {
+        title: t("配置 Embedding", "Configure embedding"),
+        message: t(
+          "Embedding 配好后，AI 搜索才能使用。",
+          "Embedding is required for AI search."
+        ),
+        tab: "ai" as SettingsTab
+      }
+    }),
+    [t]
+  );
+
+  const dismissTour = useCallback(() => {
+    setTourTarget(null);
+    setTourRect(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("tour");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get("tour");
+    if (!target || !(target in tourConfig)) {
+      if (tourTarget) {
+        setTourTarget(null);
+        setTourRect(null);
+      }
+      return;
+    }
+    const config = tourConfig[target as keyof typeof tourConfig];
+    if (tourTarget !== target) {
+      setTourTarget(target);
+      setTourTitle(config.title);
+      setTourMessage(config.message);
+    }
+    if (config.tab && activeTab !== config.tab) {
+      setActiveTab(config.tab);
+      params.set("tab", config.tab);
+      window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
+    }
+  }, [activeTab, tourConfig, tourTarget]);
+
+  useEffect(() => {
+    if (!tourTarget || typeof window === "undefined") {
+      setTourRect(null);
+      return;
+    }
+    const element = document.querySelector(`[data-tour="${tourTarget}"]`) as HTMLElement | null;
+    if (!element) {
+      setTourRect(null);
+      return;
+    }
+    const updateRect = () => {
+      const rect = element.getBoundingClientRect();
+      setTourRect({
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height
+      });
+    };
+    const scrollContainer = document.querySelector(".page-scroll");
+    const handleScroll = () => updateRect();
+    const handleClick = () => dismissTour();
+    element.scrollIntoView({ block: "center", behavior: "smooth" });
+    updateRect();
+    scrollContainer?.addEventListener("scroll", handleScroll);
+    window.addEventListener("resize", handleScroll);
+    element.addEventListener("click", handleClick);
+    return () => {
+      scrollContainer?.removeEventListener("scroll", handleScroll);
+      window.removeEventListener("resize", handleScroll);
+      element.removeEventListener("click", handleClick);
+    };
+  }, [dismissTour, tourTarget, activeTab]);
+
+  const tourTooltipStyle = useMemo(() => {
+    if (!tourRect || typeof window === "undefined") {
+      return null;
+    }
+    const padding = 16;
+    const maxWidth = Math.min(320, window.innerWidth - padding * 2);
+    const preferredTop = tourRect.top + tourRect.height + 12;
+    const tooltipHeight = 140;
+    const top =
+      preferredTop + tooltipHeight > window.innerHeight
+        ? Math.max(padding, tourRect.top - tooltipHeight - 12)
+        : preferredTop;
+    const left = Math.min(
+      window.innerWidth - maxWidth - padding,
+      Math.max(padding, tourRect.left)
+    );
+    return {
+      top,
+      left,
+      width: maxWidth
+    } as const;
+  }, [tourRect]);
+
   return (
     <div className="page-scroll px-6 py-8">
       <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
@@ -1345,6 +1490,7 @@ export default function App() {
                 type="button"
                 onClick={() => openCategoryDialog()}
                 className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/80 px-4 py-2 text-sm font-semibold text-slate-700"
+                data-tour="categories-add"
               >
                 <PlusIcon /> {t("新增分类", "Add category")}
               </button>
@@ -1361,7 +1507,7 @@ export default function App() {
               </div>
             ) : (
               <div className="grid gap-3 md:grid-cols-2">
-                {sortedCategories.map((category) => {
+                {sortedCategories.map((category, index) => {
                   const rules = rulesByCategory.get(category.id) ?? [];
                   const domainRules = rules.filter((rule) => rule.type === "domain");
                   const prefixRules = rules.filter((rule) => rule.type === "urlPrefix");
@@ -1406,6 +1552,7 @@ export default function App() {
                             type="button"
                             onClick={() => openCategoryDialog(category)}
                             className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
+                            data-tour={index === 0 ? "rules-edit" : undefined}
                           >
                             {t("编辑", "Edit")}
                           </button>
@@ -1679,667 +1826,706 @@ export default function App() {
               </div>
             ) : (
               <div className="space-y-5">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <label className="space-y-2">
-                    <FieldLabel label={t("API 类型", "API type")} />
-                    <Select.Root
-                      value={aiDraft.type}
-                      onValueChange={(value) => setAiField("type", value as ApiType)}
-                    >
-                      <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                        <Select.Value />
-                        <Select.Icon>
-                          <ChevronDownIcon />
-                        </Select.Icon>
-                      </Select.Trigger>
-                      <Select.Portal>
-                        <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                          <Select.Viewport className="p-2">
-                            {[
-                              { value: "openai", label: "OpenAI Chat" },
-                              { value: "openai-response", label: "OpenAI Responses" },
-                              { value: "anthropic", label: "Anthropic" }
-                            ].map((option) => (
-                              <Select.Item
-                                key={option.value}
-                                value={option.value}
-                                className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                              >
-                                <Select.ItemText>{option.label}</Select.ItemText>
-                                <Select.ItemIndicator>
-                                  <CheckIcon />
-                                </Select.ItemIndicator>
-                              </Select.Item>
-                            ))}
-                          </Select.Viewport>
-                        </Select.Content>
-                      </Select.Portal>
-                    </Select.Root>
-                  </label>
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <div
+                    className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4"
+                    data-tour="ai-config"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-base font-semibold text-slate-900">
+                          {t("AI 模型配置", "LLM configuration")}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {t(
+                            "用于分类与摘要生成。",
+                            "Used for classification and summary generation."
+                          )}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
+                        {t("必填", "Required")}
+                      </span>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <label className="space-y-2">
+                          <FieldLabel label={t("API 类型", "API type")} />
+                          <Select.Root
+                            value={aiDraft.type}
+                            onValueChange={(value) => setAiField("type", value as ApiType)}
+                          >
+                            <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                              <Select.Value />
+                              <Select.Icon>
+                                <ChevronDownIcon />
+                              </Select.Icon>
+                            </Select.Trigger>
+                            <Select.Portal>
+                              <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                                <Select.Viewport className="p-2">
+                                  {[
+                                    { value: "openai", label: "OpenAI Chat" },
+                                    { value: "openai-response", label: "OpenAI Responses" },
+                                    { value: "anthropic", label: "Anthropic" }
+                                  ].map((option) => (
+                                    <Select.Item
+                                      key={option.value}
+                                      value={option.value}
+                                      className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                    >
+                                      <Select.ItemText>{option.label}</Select.ItemText>
+                                      <Select.ItemIndicator>
+                                        <CheckIcon />
+                                      </Select.ItemIndicator>
+                                    </Select.Item>
+                                  ))}
+                                </Select.Viewport>
+                              </Select.Content>
+                            </Select.Portal>
+                          </Select.Root>
+                        </label>
 
-                  <label className="space-y-2">
-                    <FieldLabel label={t("模型", "Model")} />
-                    <input
-                      className="input-field w-full"
-                      value={aiDraft.model}
-                      onChange={(event) => setAiField("model", event.target.value)}
-                      placeholder={t("例如 gpt-4o-mini", "e.g. gpt-4o-mini")}
-                    />
-                  </label>
-                </div>
+                        <label className="space-y-2">
+                          <FieldLabel label={t("模型", "Model")} />
+                          <input
+                            className="input-field w-full"
+                            value={aiDraft.model}
+                            onChange={(event) => setAiField("model", event.target.value)}
+                            placeholder={t("例如 gpt-4o-mini", "e.g. gpt-4o-mini")}
+                          />
+                        </label>
+                      </div>
 
-                <label className="space-y-2">
-                  <FieldLabel label={t("Base URL", "Base URL")} />
-                  <input
-                    className="input-field w-full"
-                    value={aiDraft.baseUrl}
-                    onChange={(event) => setAiField("baseUrl", event.target.value)}
-                    placeholder="https://api.openai.com/v1"
-                    autoComplete="off"
-                  />
-                </label>
+                      <label className="space-y-2">
+                        <FieldLabel label={t("Base URL", "Base URL")} />
+                        <input
+                          className="input-field w-full"
+                          value={aiDraft.baseUrl}
+                          onChange={(event) => setAiField("baseUrl", event.target.value)}
+                          placeholder="https://api.openai.com/v1"
+                          autoComplete="off"
+                        />
+                      </label>
 
-                <label className="space-y-2">
-                  <FieldLabel label={t("API Key", "API key")} />
-                  <div className="flex flex-wrap items-center gap-2">
-                    <input
-                      type={showAiKey ? "text" : "password"}
-                      className="input-field w-full flex-1"
-                      value={aiDraft.apiKey}
-                      onChange={(event) => setAiField("apiKey", event.target.value)}
-                      placeholder="sk-..."
-                      autoComplete="new-password"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowAiKey((prev) => !prev)}
-                      className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                      aria-pressed={showAiKey}
-                      aria-label={
-                        showAiKey
-                          ? t("隐藏 API Key", "Hide API key")
-                          : t("显示 API Key", "Show API key")
-                      }
-                    >
-                      {showAiKey ? t("隐藏", "Hide") : t("显示", "Show")}
-                    </button>
+                      <label className="space-y-2">
+                        <FieldLabel label={t("API Key", "API key")} />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            type={showAiKey ? "text" : "password"}
+                            className="input-field w-full flex-1"
+                            value={aiDraft.apiKey}
+                            onChange={(event) => setAiField("apiKey", event.target.value)}
+                            placeholder="sk-..."
+                            autoComplete="new-password"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAiKey((prev) => !prev)}
+                            className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                            aria-pressed={showAiKey}
+                            aria-label={
+                              showAiKey
+                                ? t("隐藏 API Key", "Hide API key")
+                                : t("显示 API Key", "Show API key")
+                            }
+                          >
+                            {showAiKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                          </button>
+                        </div>
+                        {hasStoredAiKey && !aiDraft.apiKey.trim() ? (
+                          <div className="text-xs text-slate-500">
+                            {t(
+                              "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                              "Leave blank to keep the saved key (re-enter if base URL changes)."
+                            )}
+                          </div>
+                        ) : null}
+                      </label>
+
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={saveAiConfig}
+                          className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
+                        >
+                          {t("保存配置", "Save")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={resetAiConfig}
+                          className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                        >
+                          {t("恢复默认", "Restore defaults")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleExportAiConfig}
+                          className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                        >
+                          {t("导出 AI 配置", "Export AI config")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openAiImportDialog}
+                          className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                        >
+                          {t("导入 AI 配置", "Import AI config")}
+                        </button>
+                      </div>
+                      <div className="space-y-1 text-xs text-slate-500">
+                        <div>
+                          {t(
+                            "导出包含密钥，请勿分享或上传到公开位置。",
+                            "Exports include API keys. Do not share or upload publicly."
+                          )}
+                        </div>
+                        <div>
+                          {t(
+                            "AI 配置导入导出与收藏备份分开管理。",
+                            "AI config import/export is separate from bookmarks backup."
+                          )}
+                        </div>
+                      </div>
+                      <input
+                        ref={aiImportInputRef}
+                        type="file"
+                        accept="application/json"
+                        className="hidden"
+                        onChange={handleImportAiConfig}
+                      />
+                      <div className="text-xs text-slate-500">
+                        {t(
+                          "提示：Anthropic 请填写官方 base URL 与模型名称。",
+                          "Note: Anthropic requires the official base URL and model name."
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  {hasStoredAiKey && !aiDraft.apiKey.trim() ? (
-                    <div className="text-xs text-slate-500">
-                      {t(
-                        "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                        "Leave blank to keep the saved key (re-enter if base URL changes)."
+
+                  <div
+                    className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4"
+                    data-tour="exa-config"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-base font-semibold text-slate-900">
+                          {t("Exa 内容解析", "Exa content parsing")}
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">
+                          {t(
+                            "使用 Exa /contents 直接获取正文，减少 HTML 解析与 token 消耗。",
+                            "Use Exa /contents to fetch clean text and reduce tokens."
+                          )}
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
+                        {t("可选", "Optional")}
+                      </span>
+                    </div>
+                    <div className="mt-4 space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <label className="flex items-center gap-3 text-sm text-slate-700">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 accent-slate-700"
+                            checked={exaDraft.enabled}
+                            onChange={(event) => {
+                              const nextEnabled = event.target.checked;
+                              setExaField("enabled", nextEnabled);
+                              setExaExpanded(nextEnabled);
+                            }}
+                          />
+                          {t(
+                            "启用 Exa 内容解析（失败则回退本地解析）",
+                            "Enable Exa parsing (fallback to local on failure)."
+                          )}
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setExaExpanded((prev) => !prev)}
+                          className="outline-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold"
+                          aria-expanded={exaExpanded}
+                          aria-controls="exa-config-panel"
+                        >
+                          {exaExpanded ? t("收起配置", "Collapse") : t("展开配置", "Expand")}
+                          <ChevronDownIcon
+                            className={clsx(
+                              "transition",
+                              exaExpanded ? "rotate-180" : "rotate-0"
+                            )}
+                          />
+                        </button>
+                      </div>
+                      {exaExpanded ? (
+                        <div className="space-y-3">
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Exa Base URL", "Exa base URL")} />
+                            <input
+                              className="input-field w-full"
+                              value={exaDraft.baseUrl}
+                              onChange={(event) => setExaField("baseUrl", event.target.value)}
+                              placeholder="https://api.exa.ai"
+                              autoComplete="off"
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Exa API Key", "Exa API key")} />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type={showExaKey ? "text" : "password"}
+                                className="input-field w-full flex-1"
+                                value={exaDraft.apiKey}
+                                onChange={(event) => setExaField("apiKey", event.target.value)}
+                                placeholder="exa-..."
+                                autoComplete="new-password"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowExaKey((prev) => !prev)}
+                                className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                                aria-pressed={showExaKey}
+                                aria-label={
+                                  showExaKey
+                                    ? t("隐藏 Exa API Key", "Hide Exa API key")
+                                    : t("显示 Exa API Key", "Show Exa API key")
+                                }
+                              >
+                                {showExaKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                              </button>
+                            </div>
+                            {hasStoredExaKey && !exaDraft.apiKey.trim() ? (
+                              <div className="text-xs text-slate-500">
+                                {t(
+                                  "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                  "Leave blank to keep the saved key (re-enter if base URL changes)."
+                                )}
+                              </div>
+                            ) : null}
+                          </label>
+                          <div className="flex flex-wrap items-center gap-3">
+                            <button
+                              type="button"
+                              onClick={saveExaConfig}
+                              className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
+                            >
+                              {t("保存 Exa 配置", "Save Exa")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={resetExaConfig}
+                              className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                            >
+                              {t("恢复默认", "Restore defaults")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-slate-500">
+                          {t(
+                            "配置信息已折叠，点击“展开配置”进行修改。",
+                            "Settings are collapsed. Click expand to edit."
+                          )}
+                        </div>
                       )}
                     </div>
-                  ) : null}
-                </label>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={saveAiConfig}
-                    className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
-                  >
-                    {t("保存配置", "Save")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={resetAiConfig}
-                    className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
-                  >
-                    {t("恢复默认", "Restore defaults")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleExportAiConfig}
-                    className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
-                  >
-                    {t("导出 AI 配置", "Export AI config")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openAiImportDialog}
-                    className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
-                  >
-                    {t("导入 AI 配置", "Import AI config")}
-                  </button>
-                </div>
-                <div className="text-xs text-slate-500">
-                  {t(
-                    "导出包含密钥，请勿分享或上传到公开位置。",
-                    "Exports include API keys. Do not share or upload publicly."
-                  )}
-                </div>
-                <div className="text-xs text-slate-500">
-                  {t(
-                    "AI 配置导入导出与收藏备份分开管理。",
-                    "AI config import/export is separate from bookmarks backup."
-                  )}
-                </div>
-                <input
-                  ref={aiImportInputRef}
-                  type="file"
-                  accept="application/json"
-                  className="hidden"
-                  onChange={handleImportAiConfig}
-                />
-                <div className="text-xs text-slate-500">
-                  {t(
-                    "提示：Anthropic 请填写官方 base URL 与模型名称。",
-                    "Note: Anthropic requires the official base URL and model name."
-                  )}
+                  </div>
                 </div>
 
                 <div className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-base font-semibold text-slate-900">
-                        {t("Exa 内容解析", "Exa content parsing")}
+                        {t("AI 搜索配置", "AI search settings")}
                       </div>
                       <p className="mt-1 text-xs text-slate-500">
                         {t(
-                          "使用 Exa /contents 直接获取正文，减少 HTML 解析与 token 消耗。",
-                          "Use Exa /contents to fetch clean text and reduce tokens."
+                          "Embedding 与 Reranker 可使用不同的供应商与密钥。",
+                          "Embedding and reranker can use different providers/keys."
                         )}
                       </p>
                     </div>
                     <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
-                      {t("可选", "Optional")}
+                      {t("搜索页", "Search")}
                     </span>
                   </div>
-                  <div className="mt-4 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="flex items-center gap-3 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-slate-700"
-                          checked={exaDraft.enabled}
-                          onChange={(event) => {
-                            const nextEnabled = event.target.checked;
-                            setExaField("enabled", nextEnabled);
-                            setExaExpanded(nextEnabled);
-                          }}
-                        />
-                        {t(
-                          "启用 Exa 内容解析（失败则回退本地解析）",
-                          "Enable Exa parsing (fallback to local on failure)."
-                        )}
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setExaExpanded((prev) => !prev)}
-                        className="outline-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold"
-                        aria-expanded={exaExpanded}
-                        aria-controls="exa-config-panel"
+
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div
+                        className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4"
+                        data-tour="embedding-config"
                       >
-                        {exaExpanded ? t("收起配置", "Collapse") : t("展开配置", "Expand")}
-                        <ChevronDownIcon
-                          className={clsx(
-                            "transition",
-                            exaExpanded ? "rotate-180" : "rotate-0"
-                          )}
-                        />
-                      </button>
-                    </div>
-                    {exaExpanded ? (
-                      <div className="space-y-3">
-                        <label className="space-y-2">
-                          <FieldLabel label={t("Exa Base URL", "Exa base URL")} />
-                          <input
-                            className="input-field w-full"
-                            value={exaDraft.baseUrl}
-                            onChange={(event) => setExaField("baseUrl", event.target.value)}
-                            placeholder="https://api.exa.ai"
-                            autoComplete="off"
-                          />
-                        </label>
-                        <label className="space-y-2">
-                          <FieldLabel label={t("Exa API Key", "Exa API key")} />
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">
+                              {t("Embedding", "Embedding")}
+                            </div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {t(
+                                "必填，用于计算收藏内容的相似度。",
+                                "Required for similarity matching."
+                              )}
+                            </p>
+                          </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            <input
-                              type={showExaKey ? "text" : "password"}
-                              className="input-field w-full flex-1"
-                              value={exaDraft.apiKey}
-                              onChange={(event) => setExaField("apiKey", event.target.value)}
-                              placeholder="exa-..."
-                              autoComplete="new-password"
-                            />
+                            <span
+                              className={clsx(
+                                "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                                embeddingStatusClass
+                              )}
+                            >
+                              {embeddingStatus}
+                            </span>
                             <button
                               type="button"
-                              onClick={() => setShowExaKey((prev) => !prev)}
-                              className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                              aria-pressed={showExaKey}
-                              aria-label={
-                                showExaKey
-                                  ? t("隐藏 Exa API Key", "Hide Exa API key")
-                                  : t("显示 Exa API Key", "Show Exa API key")
-                              }
+                              onClick={() => setEmbeddingExpanded((prev) => !prev)}
+                              className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
+                              aria-expanded={embeddingExpanded}
+                              aria-controls="embedding-config-panel"
                             >
-                              {showExaKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                              {embeddingExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
+                              <ChevronDownIcon
+                                className={clsx(
+                                  "transition",
+                                  embeddingExpanded ? "rotate-180" : "rotate-0"
+                                )}
+                              />
                             </button>
                           </div>
-                          {hasStoredExaKey && !exaDraft.apiKey.trim() ? (
-                            <div className="text-xs text-slate-500">
-                              {t(
-                                "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                                "Leave blank to keep the saved key (re-enter if base URL changes)."
-                              )}
+                        </div>
+                        {embeddingExpanded ? (
+                          <div id="embedding-config-panel" className="mt-4 space-y-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <label className="space-y-2">
+                                <FieldLabel
+                                  label={t("Embedding Provider", "Embedding provider")}
+                                />
+                                <Select.Root
+                                  value={searchDraft.embedding.provider}
+                                  onValueChange={(value) =>
+                                    setSearchField(
+                                      "embedding",
+                                      "provider",
+                                      value as SearchProvider
+                                    )
+                                  }
+                                >
+                                  <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                                    <Select.Value />
+                                    <Select.Icon>
+                                      <ChevronDownIcon />
+                                    </Select.Icon>
+                                  </Select.Trigger>
+                                  <Select.Portal>
+                                    <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                                      <Select.Viewport className="p-2">
+                                        {searchProviderOptions.map((option) => (
+                                          <Select.Item
+                                            key={option.value}
+                                            value={option.value}
+                                            className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                          >
+                                            <Select.ItemText>{option.label}</Select.ItemText>
+                                            <Select.ItemIndicator>
+                                              <CheckIcon />
+                                            </Select.ItemIndicator>
+                                          </Select.Item>
+                                        ))}
+                                      </Select.Viewport>
+                                    </Select.Content>
+                                  </Select.Portal>
+                                </Select.Root>
+                              </label>
+                              <label className="space-y-2">
+                                <FieldLabel label={t("Embedding 模型", "Embedding model")} />
+                                <input
+                                  className="input-field w-full"
+                                  value={searchDraft.embedding.model}
+                                  onChange={(event) =>
+                                    setSearchField("embedding", "model", event.target.value)
+                                  }
+                                  placeholder={t(
+                                    "例如 text-embedding-3-small",
+                                    "e.g. text-embedding-3-small"
+                                  )}
+                                />
+                              </label>
                             </div>
-                          ) : null}
-                        </label>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={saveExaConfig}
-                            className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
-                          >
-                            {t("保存 Exa 配置", "Save Exa")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={resetExaConfig}
-                            className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
-                          >
-                            {t("恢复默认", "Restore defaults")}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-xs text-slate-500">
-                        {t(
-                          "配置信息已折叠，点击“展开配置”进行修改。",
-                          "Settings are collapsed. Click expand to edit."
-                        )}
-                      </div>
-                    )}
-                </div>
-              </div>
 
-              <div className="rounded-2xl border border-white/70 bg-white/80 px-5 py-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="text-base font-semibold text-slate-900">
-                      {t("AI 搜索配置", "AI search settings")}
-                    </div>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {t(
-                        "Embedding 与 Reranker 可使用不同的供应商与密钥。",
-                        "Embedding and reranker can use different providers/keys."
-                      )}
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
-                    {t("搜索页", "Search")}
-                  </span>
-                </div>
-
-                <div className="mt-4 space-y-4">
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">
-                            {t("Embedding", "Embedding")}
-                          </div>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {t(
-                              "必填，用于计算收藏内容的相似度。",
-                              "Required for similarity matching."
-                            )}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span
-                            className={clsx(
-                              "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-                              embeddingStatusClass
-                            )}
-                          >
-                            {embeddingStatus}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setEmbeddingExpanded((prev) => !prev)}
-                            className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
-                            aria-expanded={embeddingExpanded}
-                            aria-controls="embedding-config-panel"
-                          >
-                            {embeddingExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
-                            <ChevronDownIcon
-                              className={clsx(
-                                "transition",
-                                embeddingExpanded ? "rotate-180" : "rotate-0"
-                              )}
-                            />
-                          </button>
-                        </div>
-                      </div>
-                      {embeddingExpanded ? (
-                        <div id="embedding-config-panel" className="mt-4 space-y-3">
-                          <div className="grid gap-3 sm:grid-cols-2">
                             <label className="space-y-2">
-                              <FieldLabel label={t("Embedding Provider", "Embedding provider")} />
-                              <Select.Root
-                                value={searchDraft.embedding.provider}
-                                onValueChange={(value) =>
-                                  setSearchField("embedding", "provider", value as SearchProvider)
-                                }
-                              >
-                                <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                                  <Select.Value />
-                                  <Select.Icon>
-                                    <ChevronDownIcon />
-                                  </Select.Icon>
-                                </Select.Trigger>
-                                <Select.Portal>
-                                  <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                                    <Select.Viewport className="p-2">
-                                      {searchProviderOptions.map((option) => (
-                                        <Select.Item
-                                          key={option.value}
-                                          value={option.value}
-                                          className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                                        >
-                                          <Select.ItemText>{option.label}</Select.ItemText>
-                                          <Select.ItemIndicator>
-                                            <CheckIcon />
-                                          </Select.ItemIndicator>
-                                        </Select.Item>
-                                      ))}
-                                    </Select.Viewport>
-                                  </Select.Content>
-                                </Select.Portal>
-                              </Select.Root>
-                            </label>
-                            <label className="space-y-2">
-                              <FieldLabel label={t("Embedding 模型", "Embedding model")} />
+                              <FieldLabel label={t("Embedding Base URL", "Embedding base URL")} />
                               <input
                                 className="input-field w-full"
-                                value={searchDraft.embedding.model}
+                                value={searchDraft.embedding.baseUrl}
                                 onChange={(event) =>
-                                  setSearchField("embedding", "model", event.target.value)
+                                  setSearchField("embedding", "baseUrl", event.target.value)
                                 }
-                                placeholder={t(
-                                  "例如 text-embedding-3-small",
-                                  "e.g. text-embedding-3-small"
-                                )}
+                                placeholder="https://api.openai.com/v1"
+                                autoComplete="off"
                               />
                             </label>
-                          </div>
 
-                          <label className="space-y-2">
-                            <FieldLabel label={t("Embedding Base URL", "Embedding base URL")} />
-                            <input
-                              className="input-field w-full"
-                              value={searchDraft.embedding.baseUrl}
-                              onChange={(event) =>
-                                setSearchField("embedding", "baseUrl", event.target.value)
-                              }
-                              placeholder="https://api.openai.com/v1"
-                              autoComplete="off"
-                            />
-                          </label>
-
-                          <label className="space-y-2">
-                            <FieldLabel label={t("Embedding API Key", "Embedding API key")} />
-                            <div className="flex flex-wrap items-center gap-2">
-                              <input
-                                type={showEmbeddingKey ? "text" : "password"}
-                                className="input-field w-full flex-1"
-                                value={searchDraft.embedding.apiKey}
-                                onChange={(event) =>
-                                  setSearchField("embedding", "apiKey", event.target.value)
-                                }
-                                placeholder="sk-..."
-                                autoComplete="new-password"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowEmbeddingKey((prev) => !prev)}
-                                className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                                aria-pressed={showEmbeddingKey}
-                                aria-label={
-                                  showEmbeddingKey
-                                    ? t("隐藏 Embedding API Key", "Hide embedding API key")
-                                    : t("显示 Embedding API Key", "Show embedding API key")
-                                }
-                              >
-                                {showEmbeddingKey ? t("隐藏", "Hide") : t("显示", "Show")}
-                              </button>
-                            </div>
-                            {hasStoredEmbeddingKey && !searchDraft.embedding.apiKey.trim() ? (
-                              <div className="text-xs text-slate-500">
-                                {t(
-                                  "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                                  "Leave blank to keep the saved key (re-enter if base URL changes)."
-                                )}
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Embedding API Key", "Embedding API key")} />
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type={showEmbeddingKey ? "text" : "password"}
+                                  className="input-field w-full flex-1"
+                                  value={searchDraft.embedding.apiKey}
+                                  onChange={(event) =>
+                                    setSearchField("embedding", "apiKey", event.target.value)
+                                  }
+                                  placeholder="sk-..."
+                                  autoComplete="new-password"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowEmbeddingKey((prev) => !prev)}
+                                  className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                                  aria-pressed={showEmbeddingKey}
+                                  aria-label={
+                                    showEmbeddingKey
+                                      ? t("隐藏 Embedding API Key", "Hide embedding API key")
+                                      : t("显示 Embedding API Key", "Show embedding API key")
+                                  }
+                                >
+                                  {showEmbeddingKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                                </button>
                               </div>
-                            ) : null}
-                          </label>
+                              {hasStoredEmbeddingKey && !searchDraft.embedding.apiKey.trim() ? (
+                                <div className="text-xs text-slate-500">
+                                  {t(
+                                    "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                    "Leave blank to keep the saved key (re-enter if base URL changes)."
+                                  )}
+                                </div>
+                              ) : null}
+                            </label>
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-xs text-slate-500">
+                            {t(
+                              "配置信息已折叠，点击“展开”进行修改。",
+                              "Settings are collapsed. Click expand to edit."
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="text-sm font-semibold text-slate-900">Reranker</div>
+                            <p className="mt-1 text-xs text-slate-500">
+                              {t(
+                                "可选，用于二次排序提升相关性。",
+                                "Optional: refine results with a second-pass ranker."
+                              )}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4 accent-slate-700"
+                                checked={searchDraft.rerank.enabled}
+                                onChange={(event) => setRerankEnabled(event.target.checked)}
+                              />
+                              {t("启用", "Enable")}
+                            </label>
+                            <span
+                              className={clsx(
+                                "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                                rerankStatusClass
+                              )}
+                            >
+                              {rerankStatus}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setRerankExpanded((prev) => !prev)}
+                              className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
+                              aria-expanded={rerankExpanded}
+                              aria-controls="rerank-config-panel"
+                            >
+                              {rerankExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
+                              <ChevronDownIcon
+                                className={clsx(
+                                  "transition",
+                                  rerankExpanded ? "rotate-180" : "rotate-0"
+                                )}
+                              />
+                            </button>
+                          </div>
                         </div>
-                      ) : (
-                        <div className="mt-3 text-xs text-slate-500">
+                        {rerankExpanded ? (
+                          <div id="rerank-config-panel" className="mt-4 space-y-3">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                              <label className="space-y-2">
+                                <FieldLabel label={t("Reranker Provider", "Reranker provider")} />
+                                <Select.Root
+                                  value={searchDraft.rerank.provider}
+                                  onValueChange={(value) =>
+                                    setSearchField("rerank", "provider", value as SearchProvider)
+                                  }
+                                >
+                                  <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                                    <Select.Value />
+                                    <Select.Icon>
+                                      <ChevronDownIcon />
+                                    </Select.Icon>
+                                  </Select.Trigger>
+                                  <Select.Portal>
+                                    <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                                      <Select.Viewport className="p-2">
+                                        {searchProviderOptions.map((option) => (
+                                          <Select.Item
+                                            key={option.value}
+                                            value={option.value}
+                                            className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                          >
+                                            <Select.ItemText>{option.label}</Select.ItemText>
+                                            <Select.ItemIndicator>
+                                              <CheckIcon />
+                                            </Select.ItemIndicator>
+                                          </Select.Item>
+                                        ))}
+                                      </Select.Viewport>
+                                    </Select.Content>
+                                  </Select.Portal>
+                                </Select.Root>
+                              </label>
+                              <label className="space-y-2">
+                                <FieldLabel label={t("Reranker 模型", "Reranker model")} />
+                                <input
+                                  className="input-field w-full"
+                                  value={searchDraft.rerank.model}
+                                  onChange={(event) =>
+                                    setSearchField("rerank", "model", event.target.value)
+                                  }
+                                  placeholder={t("例如 rerank-lite", "e.g. rerank-lite")}
+                                />
+                              </label>
+                            </div>
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Reranker Base URL", "Reranker base URL")} />
+                              <input
+                                className="input-field w-full"
+                                value={searchDraft.rerank.baseUrl}
+                                onChange={(event) =>
+                                  setSearchField("rerank", "baseUrl", event.target.value)
+                                }
+                                placeholder="https://api.your-reranker.com"
+                                autoComplete="off"
+                              />
+                            </label>
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Reranker API Key", "Reranker API key")} />
+                              <div className="flex flex-wrap items-center gap-2">
+                                <input
+                                  type={showRerankKey ? "text" : "password"}
+                                  className="input-field w-full flex-1"
+                                  value={searchDraft.rerank.apiKey}
+                                  onChange={(event) =>
+                                    setSearchField("rerank", "apiKey", event.target.value)
+                                  }
+                                  placeholder="key-..."
+                                  autoComplete="new-password"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() => setShowRerankKey((prev) => !prev)}
+                                  className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                                  aria-pressed={showRerankKey}
+                                  aria-label={
+                                    showRerankKey
+                                      ? t("隐藏 Reranker API Key", "Hide reranker API key")
+                                      : t("显示 Reranker API Key", "Show reranker API key")
+                                  }
+                                >
+                                  {showRerankKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                                </button>
+                              </div>
+                              {hasStoredRerankKey && !searchDraft.rerank.apiKey.trim() ? (
+                                <div className="text-xs text-slate-500">
+                                  {t(
+                                    "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                    "Leave blank to keep the saved key (re-enter if base URL changes)."
+                                  )}
+                                </div>
+                              ) : null}
+                            </label>
+                          </div>
+                        ) : (
+                          <div className="mt-3 text-xs text-slate-500">
+                            {searchDraft.rerank.enabled
+                              ? t(
+                                  "已启用，点击“展开”可调整配置。",
+                                  "Enabled. Click expand to edit."
+                                )
+                              : t(
+                                  "未启用，展开后可提前填写配置。",
+                                  "Disabled. Expand to prefill settings."
+                                )}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                      <label className="space-y-2">
+                        <FieldLabel label={t("AI 匹配下限", "AI match threshold")} />
+                        <div className="flex flex-wrap items-center gap-3">
+                          <input
+                            type="range"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            value={searchDraft.minScore}
+                            onChange={(event) => setSearchMinScore(Number(event.target.value))}
+                            className="h-2 flex-1 cursor-pointer accent-slate-700"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.05}
+                            className="input-field w-20"
+                            value={searchDraft.minScore}
+                            onChange={(event) => setSearchMinScore(Number(event.target.value))}
+                          />
+                        </div>
+                        <div className="text-xs text-slate-500">
                           {t(
-                            "配置信息已折叠，点击“展开”进行修改。",
-                            "Settings are collapsed. Click expand to edit."
+                            "低于该相似度的结果会被过滤。",
+                            "Results below this similarity are filtered out."
                           )}
                         </div>
-                      )}
+                      </label>
                     </div>
 
-                    <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="text-sm font-semibold text-slate-900">Reranker</div>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {t(
-                              "可选，用于二次排序提升相关性。",
-                              "Optional: refine results with a second-pass ranker."
-                            )}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 accent-slate-700"
-                              checked={searchDraft.rerank.enabled}
-                              onChange={(event) => setRerankEnabled(event.target.checked)}
-                            />
-                            {t("启用", "Enable")}
-                          </label>
-                          <span
-                            className={clsx(
-                              "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
-                              rerankStatusClass
-                            )}
-                          >
-                            {rerankStatus}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setRerankExpanded((prev) => !prev)}
-                            className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
-                            aria-expanded={rerankExpanded}
-                            aria-controls="rerank-config-panel"
-                          >
-                            {rerankExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
-                            <ChevronDownIcon
-                              className={clsx(
-                                "transition",
-                                rerankExpanded ? "rotate-180" : "rotate-0"
-                              )}
-                            />
-                          </button>
-                        </div>
-                      </div>
-                      {rerankExpanded ? (
-                        <div id="rerank-config-panel" className="mt-4 space-y-3">
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            <label className="space-y-2">
-                              <FieldLabel label={t("Reranker Provider", "Reranker provider")} />
-                              <Select.Root
-                                value={searchDraft.rerank.provider}
-                                onValueChange={(value) =>
-                                  setSearchField("rerank", "provider", value as SearchProvider)
-                                }
-                              >
-                                <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                                  <Select.Value />
-                                  <Select.Icon>
-                                    <ChevronDownIcon />
-                                  </Select.Icon>
-                                </Select.Trigger>
-                                <Select.Portal>
-                                  <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                                    <Select.Viewport className="p-2">
-                                      {searchProviderOptions.map((option) => (
-                                        <Select.Item
-                                          key={option.value}
-                                          value={option.value}
-                                          className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                                        >
-                                          <Select.ItemText>{option.label}</Select.ItemText>
-                                          <Select.ItemIndicator>
-                                            <CheckIcon />
-                                          </Select.ItemIndicator>
-                                        </Select.Item>
-                                      ))}
-                                    </Select.Viewport>
-                                  </Select.Content>
-                                </Select.Portal>
-                              </Select.Root>
-                            </label>
-                            <label className="space-y-2">
-                              <FieldLabel label={t("Reranker 模型", "Reranker model")} />
-                              <input
-                                className="input-field w-full"
-                                value={searchDraft.rerank.model}
-                                onChange={(event) =>
-                                  setSearchField("rerank", "model", event.target.value)
-                                }
-                                placeholder={t("例如 rerank-lite", "e.g. rerank-lite")}
-                              />
-                            </label>
-                          </div>
-                          <label className="space-y-2">
-                            <FieldLabel label={t("Reranker Base URL", "Reranker base URL")} />
-                            <input
-                              className="input-field w-full"
-                              value={searchDraft.rerank.baseUrl}
-                              onChange={(event) =>
-                                setSearchField("rerank", "baseUrl", event.target.value)
-                              }
-                              placeholder="https://api.your-reranker.com"
-                              autoComplete="off"
-                            />
-                          </label>
-                          <label className="space-y-2">
-                            <FieldLabel label={t("Reranker API Key", "Reranker API key")} />
-                            <div className="flex flex-wrap items-center gap-2">
-                              <input
-                                type={showRerankKey ? "text" : "password"}
-                                className="input-field w-full flex-1"
-                                value={searchDraft.rerank.apiKey}
-                                onChange={(event) =>
-                                  setSearchField("rerank", "apiKey", event.target.value)
-                                }
-                                placeholder="key-..."
-                                autoComplete="new-password"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setShowRerankKey((prev) => !prev)}
-                                className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                                aria-pressed={showRerankKey}
-                                aria-label={
-                                  showRerankKey
-                                    ? t("隐藏 Reranker API Key", "Hide reranker API key")
-                                    : t("显示 Reranker API Key", "Show reranker API key")
-                                }
-                              >
-                                {showRerankKey ? t("隐藏", "Hide") : t("显示", "Show")}
-                              </button>
-                            </div>
-                            {hasStoredRerankKey && !searchDraft.rerank.apiKey.trim() ? (
-                              <div className="text-xs text-slate-500">
-                                {t(
-                                  "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                                  "Leave blank to keep the saved key (re-enter if base URL changes)."
-                                )}
-                              </div>
-                            ) : null}
-                          </label>
-                        </div>
-                      ) : (
-                        <div className="mt-3 text-xs text-slate-500">
-                          {searchDraft.rerank.enabled
-                            ? t(
-                                "已启用，点击“展开”可调整配置。",
-                                "Enabled. Click expand to edit."
-                              )
-                            : t(
-                                "未启用，展开后可提前填写配置。",
-                                "Disabled. Expand to prefill settings."
-                              )}
-                        </div>
-                      )}
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={saveSearchConfig}
+                        className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
+                      >
+                        {t("保存搜索配置", "Save search settings")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={resetSearchConfig}
+                        className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
+                      >
+                        {t("恢复默认", "Restore defaults")}
+                      </button>
                     </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
-                    <label className="space-y-2">
-                      <FieldLabel label={t("AI 匹配下限", "AI match threshold")} />
-                      <div className="flex flex-wrap items-center gap-3">
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={searchDraft.minScore}
-                          onChange={(event) => setSearchMinScore(Number(event.target.value))}
-                          className="h-2 flex-1 cursor-pointer accent-slate-700"
-                        />
-                        <input
-                          type="number"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          className="input-field w-20"
-                          value={searchDraft.minScore}
-                          onChange={(event) => setSearchMinScore(Number(event.target.value))}
-                        />
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {t(
-                          "低于该相似度的结果会被过滤。",
-                          "Results below this similarity are filtered out."
-                        )}
-                      </div>
-                    </label>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={saveSearchConfig}
-                      className="gradient-button rounded-full px-5 py-2 text-sm font-semibold"
-                    >
-                      {t("保存搜索配置", "Save search settings")}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={resetSearchConfig}
-                      className="outline-button rounded-full px-5 py-2 text-sm font-semibold"
-                    >
-                      {t("恢复默认", "Restore defaults")}
-                    </button>
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </Tabs.Content>
+            )}
+          </Tabs.Content>
         </Tabs.Root>
       </div>
 
@@ -2546,6 +2732,42 @@ export default function App() {
         >
           {dataStatus}
         </div>
+      ) : null}
+
+      {tourTarget && tourRect ? (
+        <>
+          <div
+            className="tour-spotlight"
+            style={{
+              top: Math.max(0, tourRect.top - 6),
+              left: Math.max(0, tourRect.left - 6),
+              width: tourRect.width + 12,
+              height: tourRect.height + 12
+            }}
+          />
+          {tourTooltipStyle ? (
+            <div className="tour-tooltip" style={tourTooltipStyle}>
+              <div className="tour-tooltip-title">{tourTitle}</div>
+              <div className="tour-tooltip-message">{tourMessage}</div>
+              <div className="tour-tooltip-actions">
+                <button
+                  type="button"
+                  onClick={dismissTour}
+                  className="outline-button rounded-full px-3 py-1 text-xs font-semibold"
+                >
+                  {t("跳过引导", "Skip")}
+                </button>
+                <button
+                  type="button"
+                  onClick={dismissTour}
+                  className="gradient-button rounded-full px-3 py-1 text-xs font-semibold"
+                >
+                  {t("知道了", "Got it")}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

@@ -6,7 +6,7 @@ import { getLanguageTag, useI18n } from "../shared/i18n";
 
 export default function App() {
   const { t, locale } = useI18n();
-  const { state } = useAppState();
+  const { state, update } = useAppState();
 
   useEffect(() => {
     document.documentElement.lang = getLanguageTag(locale);
@@ -21,6 +21,49 @@ export default function App() {
       state.search.embedding.baseUrl &&
       state.search.embedding.model
   );
+  const onboarding = state?.ui.onboarding;
+  const categoriesDone = Boolean(onboarding?.categories || hasCategories);
+  const rulesDone = Boolean(onboarding?.rules || hasRules);
+  const aiDone = Boolean(onboarding?.ai || aiReady);
+  const exaDone = Boolean(onboarding?.exa || exaReady);
+  const embeddingDone = Boolean(onboarding?.embedding || embeddingReady);
+
+  useEffect(() => {
+    if (!state || !onboarding) {
+      return;
+    }
+    const next = { ...onboarding };
+    let changed = false;
+    if (hasCategories && !next.categories) {
+      next.categories = true;
+      changed = true;
+    }
+    if (hasRules && !next.rules) {
+      next.rules = true;
+      changed = true;
+    }
+    if (aiReady && !next.ai) {
+      next.ai = true;
+      changed = true;
+    }
+    if (exaReady && !next.exa) {
+      next.exa = true;
+      changed = true;
+    }
+    if (embeddingReady && !next.embedding) {
+      next.embedding = true;
+      changed = true;
+    }
+    if (changed) {
+      void update((current) => ({
+        ...current,
+        ui: {
+          ...current.ui,
+          onboarding: next
+        }
+      }));
+    }
+  }, [aiReady, embeddingReady, exaReady, hasCategories, hasRules, onboarding, state, update]);
   const steps = useMemo(
     () => [
       {
@@ -70,6 +113,18 @@ export default function App() {
     chrome.tabs.create({ url });
   }, []);
 
+  const openOptionsTour = useCallback(
+    (tab: "categories" | "bookmarks" | "ai", tour?: string) => {
+      const url = new URL(chrome.runtime.getURL("options/index.html"));
+      url.searchParams.set("tab", tab);
+      if (tour) {
+        url.searchParams.set("tour", tour);
+      }
+      chrome.tabs.create({ url: url.toString() });
+    },
+    []
+  );
+
   const openShortcuts = () => {
     const isEdge = navigator.userAgent.includes("Edg");
     const url = isEdge ? "edge://extensions/shortcuts" : "chrome://extensions/shortcuts";
@@ -81,40 +136,48 @@ export default function App() {
       {
         title: t("已创建分类", "Categories created"),
         description: t("建议先建立 3-5 个常用分类。", "Start with 3-5 core categories."),
-        done: hasCategories,
+        done: categoriesDone,
         optional: false,
-        action: () => openOptionsTab("categories")
+        action: () => openOptionsTour("categories", "categories-add")
       },
       {
         title: t("已添加规则", "Rules added"),
         description: t("为固定站点配置域名或 URL 前缀。", "Add domain or URL prefix rules."),
-        done: hasRules,
+        done: rulesDone,
         optional: false,
-        action: () => openOptionsTab("categories")
+        action: () => openOptionsTour("categories", "rules-edit")
       },
       {
         title: t("AI 已配置", "AI configured"),
         description: t("填写 API Key 与模型名称。", "Provide API key and model."),
-        done: aiReady,
+        done: aiDone,
         optional: false,
-        action: () => openOptionsTab("ai")
+        action: () => openOptionsTour("ai", "ai-config")
       },
       {
         title: t("Exa 已启用", "Exa enabled"),
         description: t("可选，用于提取页面内容。", "Optional: fetch cleaner page content."),
-        done: exaReady,
+        done: exaDone,
         optional: true,
-        action: () => openOptionsTab("ai")
+        action: () => openOptionsTour("ai", "exa-config")
       },
       {
         title: t("AI 搜索已配置", "AI search ready"),
         description: t("可选，配置 Embedding 后更好用。", "Optional: add embeddings for AI search."),
-        done: embeddingReady,
+        done: embeddingDone,
         optional: true,
-        action: () => openOptionsTab("ai")
+        action: () => openOptionsTour("ai", "embedding-config")
       }
     ],
-    [t, hasCategories, hasRules, aiReady, exaReady, embeddingReady, openOptionsTab]
+    [
+      t,
+      categoriesDone,
+      rulesDone,
+      aiDone,
+      exaDone,
+      embeddingDone,
+      openOptionsTour
+    ]
   );
 
   return (
