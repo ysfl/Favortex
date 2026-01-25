@@ -14,7 +14,8 @@ function buildCategoryList(categories: Category[], rules: Rule[]) {
     .filter((rule) => rule.type === "natural")
     .forEach((rule) => {
       const existing = naturalByCategory.get(rule.categoryId) ?? [];
-      existing.push(truncateText(rule.value, 160));
+      const normalized = sanitizeText(rule.value);
+      existing.push(truncateText(normalized, 160));
       naturalByCategory.set(rule.categoryId, existing);
     });
 

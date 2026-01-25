@@ -64,7 +64,7 @@ export function urlPrefixMatches(rulePrefix: string, url: string): boolean {
   if (normalizedUrl.startsWith(normalizedPrefix)) {
     return true;
   }
-  const withoutScheme = normalizedUrl.replace(/^[a-z]+:\/\//, "");
+  const withoutScheme = normalizedUrl.replace(/^[a-z][a-z0-9+.-]*:\/\//, "");
   return withoutScheme.startsWith(normalizedPrefix);
 }
 

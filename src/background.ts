@@ -70,6 +70,14 @@ function isRestrictedUrl(url?: string) {
   }
 }
 
+function getRuleSpecificity(rule: { type: string; value: string }) {
+  const value = rule.value.trim().toLowerCase();
+  if (rule.type === "urlPrefix") {
+    return value.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").length;
+  }
+  return value.length;
+}
+
 function sendPageTextMessage(tabId: number): Promise<PageTextResponse> {
   return new Promise((resolve, reject) => {
     chrome.tabs.sendMessage(tabId, { type: "GET_PAGE_TEXT" }, (response) => {
@@ -428,7 +436,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         }
         return false;
       })
-      .sort((a, b) => b.value.length - a.value.length)[0];
+      .sort((a, b) => getRuleSpecificity(b) - getRuleSpecificity(a))[0];
 
     let categoryId = matchedRule?.categoryId ?? DEFAULT_CATEGORY_ID;
     let summaryShort = "";
