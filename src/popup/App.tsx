@@ -240,7 +240,7 @@ export default function App() {
             <button
               type="button"
               onClick={openSearchPage}
-              className="icon-button rounded-full p-2"
+              className="icon-button"
               aria-label={t("打开搜索", "Open search")}
               title={t("搜索收藏", "Search bookmarks")}
             >
@@ -249,7 +249,7 @@ export default function App() {
             <button
               type="button"
               onClick={openOptions}
-              className="icon-button rounded-full p-2"
+              className="icon-button"
               aria-label={t("打开设置", "Open settings")}
               title={t("设置", "Settings")}
             >
@@ -263,7 +263,7 @@ export default function App() {
           onClick={handleClassify}
           disabled={busy}
           className={clsx(
-            "gradient-button mt-4 w-full rounded-2xl px-4 py-3 text-sm font-semibold tracking-wide transition",
+            "gradient-button mt-4 w-full rounded-full px-5 py-2 text-sm font-semibold transition",
             busy ? "opacity-70" : "lift-on-hover"
           )}
         >

@@ -472,7 +472,7 @@ export default function App() {
                 onClick={() => void performSearch()}
                 disabled={busy || !state}
                 className={clsx(
-                  "gradient-button inline-flex items-center justify-center rounded-2xl px-5 py-3 text-sm font-semibold transition",
+                  "gradient-button inline-flex items-center justify-center rounded-full px-5 py-2 text-sm font-semibold transition",
                   busy || !state ? "opacity-70" : "lift-on-hover"
                 )}
               >

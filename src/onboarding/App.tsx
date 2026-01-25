@@ -195,12 +195,12 @@ export default function App() {
                       ? t("可选", "Optional")
                       : t("待配置", "Pending");
                 const statusClass = !state
-                  ? "border-slate-200 bg-white/80 text-slate-500"
+                  ? "border-white/70 bg-white/80 text-slate-500"
                   : item.done
-                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    ? "border-white/70 bg-emerald-600 text-white"
                     : item.optional
-                      ? "border-slate-200 bg-white/80 text-slate-500"
-                      : "border-amber-200 bg-amber-50 text-amber-700";
+                      ? "border-white/70 bg-white/80 text-slate-500"
+                      : "border-white/70 bg-amber-700 text-white";
                 return (
                   <div
                     key={item.title}

@@ -169,9 +169,12 @@ export default function App() {
   const [showExaKey, setShowExaKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
   const [showRerankKey, setShowRerankKey] = useState(false);
+  const [embeddingExpanded, setEmbeddingExpanded] = useState(false);
+  const [rerankExpanded, setRerankExpanded] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const aiImportInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
+  const initializedRef = useRef(false);
   const deferredBookmarkQuery = useDeferredValue(bookmarkQuery);
 
   useEffect(() => {
@@ -192,30 +195,43 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
-    if (state) {
-      setAiDraft({
-        type: state.ai.type,
-        baseUrl: state.ai.baseUrl,
-        apiKey: "",
-        model: state.ai.model
-      });
-      setExaDraft({
-        enabled: state.exa.enabled,
-        baseUrl: state.exa.baseUrl,
+    if (!state) {
+      return;
+    }
+    setAiDraft({
+      type: state.ai.type,
+      baseUrl: state.ai.baseUrl,
+      apiKey: "",
+      model: state.ai.model
+    });
+    setExaDraft({
+      enabled: state.exa.enabled,
+      baseUrl: state.exa.baseUrl,
+      apiKey: ""
+    });
+    setSearchDraft({
+      embedding: {
+        ...state.search.embedding,
         apiKey: ""
-      });
+      },
+      rerank: {
+        ...state.search.rerank,
+        apiKey: ""
+      },
+      minScore: state.search.minScore
+    });
+    if (!initializedRef.current) {
       setExaExpanded(state.exa.enabled);
-      setSearchDraft({
-        embedding: {
-          ...state.search.embedding,
-          apiKey: ""
-        },
-        rerank: {
-          ...state.search.rerank,
-          apiKey: ""
-        },
-        minScore: state.search.minScore
-      });
+      setEmbeddingExpanded(false);
+      setRerankExpanded(state.search.rerank.enabled);
+      initializedRef.current = true;
+      return;
+    }
+    if (!state.exa.enabled) {
+      setExaExpanded(false);
+    }
+    if (!state.search.rerank.enabled) {
+      setRerankExpanded(false);
     }
   }, [state]);
 
@@ -310,6 +326,33 @@ export default function App() {
   const hasStoredExaKey = Boolean(state?.exa.apiKey);
   const hasStoredEmbeddingKey = Boolean(state?.search.embedding.apiKey);
   const hasStoredRerankKey = Boolean(state?.search.rerank.apiKey);
+  const embeddingConfigured = Boolean(
+    searchDraft.embedding.baseUrl.trim() &&
+      searchDraft.embedding.model.trim() &&
+      (searchDraft.embedding.apiKey.trim() || state?.search.embedding.apiKey)
+  );
+  const rerankConfigured = Boolean(
+    searchDraft.rerank.enabled &&
+      searchDraft.rerank.baseUrl.trim() &&
+      searchDraft.rerank.model.trim() &&
+      (searchDraft.rerank.apiKey.trim() || state?.search.rerank.apiKey)
+  );
+  const embeddingStatus = embeddingConfigured
+    ? t("已配置", "Configured")
+    : t("待配置", "Needs setup");
+  const embeddingStatusClass = embeddingConfigured
+    ? "border-white/70 bg-emerald-600 text-white"
+    : "border-white/70 bg-amber-700 text-white";
+  const rerankStatus = searchDraft.rerank.enabled
+    ? rerankConfigured
+      ? t("已配置", "Configured")
+      : t("待配置", "Needs setup")
+    : t("未启用", "Disabled");
+  const rerankStatusClass = searchDraft.rerank.enabled
+    ? rerankConfigured
+      ? "border-white/70 bg-emerald-600 text-white"
+      : "border-white/70 bg-amber-700 text-white"
+    : "border-white/70 bg-white/80 text-slate-500";
   const dateFormatter = useMemo(
     () =>
       new Intl.DateTimeFormat(locale === "zh" ? "zh-Hans-CN" : "en-US", {
@@ -579,6 +622,7 @@ export default function App() {
         enabled
       }
     }));
+    setRerankExpanded(enabled);
   };
 
   const setSearchMinScore = (value: number) => {
@@ -1931,249 +1975,348 @@ export default function App() {
 
                 <div className="mt-4 space-y-4">
                   <div className="grid gap-4 md:grid-cols-2">
-                    <label className="space-y-2">
-                      <FieldLabel label={t("Embedding Provider", "Embedding provider")} />
-                      <Select.Root
-                        value={searchDraft.embedding.provider}
-                        onValueChange={(value) =>
-                          setSearchField("embedding", "provider", value as SearchProvider)
-                        }
-                      >
-                        <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                          <Select.Value />
-                          <Select.Icon>
-                            <ChevronDownIcon />
-                          </Select.Icon>
-                        </Select.Trigger>
-                        <Select.Portal>
-                          <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                            <Select.Viewport className="p-2">
-                              {searchProviderOptions.map((option) => (
-                                <Select.Item
-                                  key={option.value}
-                                  value={option.value}
-                                  className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                                >
-                                  <Select.ItemText>{option.label}</Select.ItemText>
-                                  <Select.ItemIndicator>
-                                    <CheckIcon />
-                                  </Select.ItemIndicator>
-                                </Select.Item>
-                              ))}
-                            </Select.Viewport>
-                          </Select.Content>
-                        </Select.Portal>
-                      </Select.Root>
-                    </label>
-                    <label className="space-y-2">
-                      <FieldLabel label={t("Embedding 模型", "Embedding model")} />
-                      <input
-                        className="input-field w-full"
-                        value={searchDraft.embedding.model}
-                        onChange={(event) =>
-                          setSearchField("embedding", "model", event.target.value)
-                        }
-                        placeholder={t("例如 text-embedding-3-small", "e.g. text-embedding-3-small")}
-                      />
-                    </label>
-                  </div>
-
-                  <label className="space-y-2">
-                    <FieldLabel label={t("Embedding Base URL", "Embedding base URL")} />
-                    <input
-                      className="input-field w-full"
-                      value={searchDraft.embedding.baseUrl}
-                      onChange={(event) =>
-                        setSearchField("embedding", "baseUrl", event.target.value)
-                      }
-                      placeholder="https://api.openai.com/v1"
-                      autoComplete="off"
-                    />
-                  </label>
-
-                  <label className="space-y-2">
-                    <FieldLabel label={t("Embedding API Key", "Embedding API key")} />
-                    <div className="flex flex-wrap items-center gap-2">
-                      <input
-                        type={showEmbeddingKey ? "text" : "password"}
-                        className="input-field w-full flex-1"
-                        value={searchDraft.embedding.apiKey}
-                        onChange={(event) =>
-                          setSearchField("embedding", "apiKey", event.target.value)
-                        }
-                        placeholder="sk-..."
-                        autoComplete="new-password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowEmbeddingKey((prev) => !prev)}
-                        className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                        aria-pressed={showEmbeddingKey}
-                        aria-label={
-                          showEmbeddingKey
-                            ? t("隐藏 Embedding API Key", "Hide embedding API key")
-                            : t("显示 Embedding API Key", "Show embedding API key")
-                        }
-                      >
-                        {showEmbeddingKey ? t("隐藏", "Hide") : t("显示", "Show")}
-                      </button>
-                    </div>
-                    {hasStoredEmbeddingKey && !searchDraft.embedding.apiKey.trim() ? (
-                      <div className="text-xs text-slate-500">
-                        {t(
-                          "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                          "Leave blank to keep the saved key (re-enter if base URL changes)."
-                        )}
-                      </div>
-                    ) : null}
-                  </label>
-
-                  <label className="space-y-2">
-                    <FieldLabel label={t("AI 匹配下限", "AI match threshold")} />
-                    <div className="flex flex-wrap items-center gap-3">
-                      <input
-                        type="range"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        value={searchDraft.minScore}
-                        onChange={(event) =>
-                          setSearchMinScore(Number(event.target.value))
-                        }
-                        className="h-2 flex-1 cursor-pointer accent-slate-700"
-                      />
-                      <input
-                        type="number"
-                        min={0}
-                        max={1}
-                        step={0.05}
-                        className="input-field w-24"
-                        value={searchDraft.minScore}
-                        onChange={(event) =>
-                          setSearchMinScore(Number(event.target.value))
-                        }
-                      />
-                    </div>
-                    <div className="text-xs text-slate-500">
-                      {t(
-                        "低于该相似度的结果会被过滤。",
-                        "Results below this similarity are filtered out."
-                      )}
-                    </div>
-                  </label>
-
-                  <div className="rounded-2xl border border-white/70 bg-white/70 px-4 py-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-slate-700"
-                          checked={searchDraft.rerank.enabled}
-                          onChange={(event) => setRerankEnabled(event.target.checked)}
-                        />
-                        {t("启用 Reranker", "Enable reranker")}
-                      </label>
-                      <span className="text-xs text-slate-500">
-                        {t("启用后用于二次排序", "Use for second-pass sorting")}
-                      </span>
-                    </div>
-                    <div className="mt-4 space-y-3">
-                      <div className="grid gap-4 md:grid-cols-2">
-                        <label className="space-y-2">
-                          <FieldLabel label={t("Reranker Provider", "Reranker provider")} />
-                          <Select.Root
-                            value={searchDraft.rerank.provider}
-                            onValueChange={(value) =>
-                              setSearchField("rerank", "provider", value as SearchProvider)
-                            }
-                          >
-                            <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
-                              <Select.Value />
-                              <Select.Icon>
-                                <ChevronDownIcon />
-                              </Select.Icon>
-                            </Select.Trigger>
-                            <Select.Portal>
-                              <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
-                                <Select.Viewport className="p-2">
-                                  {searchProviderOptions.map((option) => (
-                                    <Select.Item
-                                      key={option.value}
-                                      value={option.value}
-                                      className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
-                                    >
-                                      <Select.ItemText>{option.label}</Select.ItemText>
-                                      <Select.ItemIndicator>
-                                        <CheckIcon />
-                                      </Select.ItemIndicator>
-                                    </Select.Item>
-                                  ))}
-                                </Select.Viewport>
-                              </Select.Content>
-                            </Select.Portal>
-                          </Select.Root>
-                        </label>
-                        <label className="space-y-2">
-                          <FieldLabel label={t("Reranker 模型", "Reranker model")} />
-                          <input
-                            className="input-field w-full"
-                            value={searchDraft.rerank.model}
-                            onChange={(event) =>
-                              setSearchField("rerank", "model", event.target.value)
-                            }
-                            placeholder={t("例如 rerank-lite", "e.g. rerank-lite")}
-                          />
-                        </label>
-                      </div>
-                      <label className="space-y-2">
-                        <FieldLabel label={t("Reranker Base URL", "Reranker base URL")} />
-                        <input
-                          className="input-field w-full"
-                          value={searchDraft.rerank.baseUrl}
-                          onChange={(event) =>
-                            setSearchField("rerank", "baseUrl", event.target.value)
-                          }
-                          placeholder="https://api.your-reranker.com"
-                          autoComplete="off"
-                        />
-                      </label>
-                      <label className="space-y-2">
-                        <FieldLabel label={t("Reranker API Key", "Reranker API key")} />
+                    <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">
+                            {t("Embedding", "Embedding")}
+                          </div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {t(
+                              "必填，用于计算收藏内容的相似度。",
+                              "Required for similarity matching."
+                            )}
+                          </p>
+                        </div>
                         <div className="flex flex-wrap items-center gap-2">
-                          <input
-                            type={showRerankKey ? "text" : "password"}
-                            className="input-field w-full flex-1"
-                            value={searchDraft.rerank.apiKey}
-                            onChange={(event) =>
-                              setSearchField("rerank", "apiKey", event.target.value)
-                            }
-                            placeholder="key-..."
-                            autoComplete="new-password"
-                          />
+                          <span
+                            className={clsx(
+                              "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                              embeddingStatusClass
+                            )}
+                          >
+                            {embeddingStatus}
+                          </span>
                           <button
                             type="button"
-                            onClick={() => setShowRerankKey((prev) => !prev)}
-                            className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
-                            aria-pressed={showRerankKey}
-                            aria-label={
-                              showRerankKey
-                                ? t("隐藏 Reranker API Key", "Hide reranker API key")
-                                : t("显示 Reranker API Key", "Show reranker API key")
-                            }
+                            onClick={() => setEmbeddingExpanded((prev) => !prev)}
+                            className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
+                            aria-expanded={embeddingExpanded}
+                            aria-controls="embedding-config-panel"
                           >
-                            {showRerankKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                            {embeddingExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
+                            <ChevronDownIcon
+                              className={clsx(
+                                "transition",
+                                embeddingExpanded ? "rotate-180" : "rotate-0"
+                              )}
+                            />
                           </button>
                         </div>
-                        {hasStoredRerankKey && !searchDraft.rerank.apiKey.trim() ? (
-                          <div className="text-xs text-slate-500">
-                            {t(
-                              "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
-                              "Leave blank to keep the saved key (re-enter if base URL changes)."
-                            )}
+                      </div>
+                      {embeddingExpanded ? (
+                        <div id="embedding-config-panel" className="mt-4 space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Embedding Provider", "Embedding provider")} />
+                              <Select.Root
+                                value={searchDraft.embedding.provider}
+                                onValueChange={(value) =>
+                                  setSearchField("embedding", "provider", value as SearchProvider)
+                                }
+                              >
+                                <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                                  <Select.Value />
+                                  <Select.Icon>
+                                    <ChevronDownIcon />
+                                  </Select.Icon>
+                                </Select.Trigger>
+                                <Select.Portal>
+                                  <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                                    <Select.Viewport className="p-2">
+                                      {searchProviderOptions.map((option) => (
+                                        <Select.Item
+                                          key={option.value}
+                                          value={option.value}
+                                          className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                        >
+                                          <Select.ItemText>{option.label}</Select.ItemText>
+                                          <Select.ItemIndicator>
+                                            <CheckIcon />
+                                          </Select.ItemIndicator>
+                                        </Select.Item>
+                                      ))}
+                                    </Select.Viewport>
+                                  </Select.Content>
+                                </Select.Portal>
+                              </Select.Root>
+                            </label>
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Embedding 模型", "Embedding model")} />
+                              <input
+                                className="input-field w-full"
+                                value={searchDraft.embedding.model}
+                                onChange={(event) =>
+                                  setSearchField("embedding", "model", event.target.value)
+                                }
+                                placeholder={t(
+                                  "例如 text-embedding-3-small",
+                                  "e.g. text-embedding-3-small"
+                                )}
+                              />
+                            </label>
                           </div>
-                        ) : null}
-                      </label>
+
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Embedding Base URL", "Embedding base URL")} />
+                            <input
+                              className="input-field w-full"
+                              value={searchDraft.embedding.baseUrl}
+                              onChange={(event) =>
+                                setSearchField("embedding", "baseUrl", event.target.value)
+                              }
+                              placeholder="https://api.openai.com/v1"
+                              autoComplete="off"
+                            />
+                          </label>
+
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Embedding API Key", "Embedding API key")} />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type={showEmbeddingKey ? "text" : "password"}
+                                className="input-field w-full flex-1"
+                                value={searchDraft.embedding.apiKey}
+                                onChange={(event) =>
+                                  setSearchField("embedding", "apiKey", event.target.value)
+                                }
+                                placeholder="sk-..."
+                                autoComplete="new-password"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowEmbeddingKey((prev) => !prev)}
+                                className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                                aria-pressed={showEmbeddingKey}
+                                aria-label={
+                                  showEmbeddingKey
+                                    ? t("隐藏 Embedding API Key", "Hide embedding API key")
+                                    : t("显示 Embedding API Key", "Show embedding API key")
+                                }
+                              >
+                                {showEmbeddingKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                              </button>
+                            </div>
+                            {hasStoredEmbeddingKey && !searchDraft.embedding.apiKey.trim() ? (
+                              <div className="text-xs text-slate-500">
+                                {t(
+                                  "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                  "Leave blank to keep the saved key (re-enter if base URL changes)."
+                                )}
+                              </div>
+                            ) : null}
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="mt-3 text-xs text-slate-500">
+                          {t(
+                            "配置信息已折叠，点击“展开”进行修改。",
+                            "Settings are collapsed. Click expand to edit."
+                          )}
+                        </div>
+                      )}
                     </div>
+
+                    <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-900">Reranker</div>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {t(
+                              "可选，用于二次排序提升相关性。",
+                              "Optional: refine results with a second-pass ranker."
+                            )}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 accent-slate-700"
+                              checked={searchDraft.rerank.enabled}
+                              onChange={(event) => setRerankEnabled(event.target.checked)}
+                            />
+                            {t("启用", "Enable")}
+                          </label>
+                          <span
+                            className={clsx(
+                              "rounded-full border px-2 py-0.5 text-[11px] font-semibold",
+                              rerankStatusClass
+                            )}
+                          >
+                            {rerankStatus}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setRerankExpanded((prev) => !prev)}
+                            className="outline-button inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold"
+                            aria-expanded={rerankExpanded}
+                            aria-controls="rerank-config-panel"
+                          >
+                            {rerankExpanded ? t("收起", "Collapse") : t("展开", "Expand")}
+                            <ChevronDownIcon
+                              className={clsx(
+                                "transition",
+                                rerankExpanded ? "rotate-180" : "rotate-0"
+                              )}
+                            />
+                          </button>
+                        </div>
+                      </div>
+                      {rerankExpanded ? (
+                        <div id="rerank-config-panel" className="mt-4 space-y-3">
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Reranker Provider", "Reranker provider")} />
+                              <Select.Root
+                                value={searchDraft.rerank.provider}
+                                onValueChange={(value) =>
+                                  setSearchField("rerank", "provider", value as SearchProvider)
+                                }
+                              >
+                                <Select.Trigger className="input-field inline-flex w-full items-center justify-between">
+                                  <Select.Value />
+                                  <Select.Icon>
+                                    <ChevronDownIcon />
+                                  </Select.Icon>
+                                </Select.Trigger>
+                                <Select.Portal>
+                                  <Select.Content className="overflow-hidden rounded-2xl border border-white/70 bg-white">
+                                    <Select.Viewport className="p-2">
+                                      {searchProviderOptions.map((option) => (
+                                        <Select.Item
+                                          key={option.value}
+                                          value={option.value}
+                                          className="select-item flex cursor-pointer items-center justify-between rounded-xl px-3 py-2 text-sm text-slate-700"
+                                        >
+                                          <Select.ItemText>{option.label}</Select.ItemText>
+                                          <Select.ItemIndicator>
+                                            <CheckIcon />
+                                          </Select.ItemIndicator>
+                                        </Select.Item>
+                                      ))}
+                                    </Select.Viewport>
+                                  </Select.Content>
+                                </Select.Portal>
+                              </Select.Root>
+                            </label>
+                            <label className="space-y-2">
+                              <FieldLabel label={t("Reranker 模型", "Reranker model")} />
+                              <input
+                                className="input-field w-full"
+                                value={searchDraft.rerank.model}
+                                onChange={(event) =>
+                                  setSearchField("rerank", "model", event.target.value)
+                                }
+                                placeholder={t("例如 rerank-lite", "e.g. rerank-lite")}
+                              />
+                            </label>
+                          </div>
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Reranker Base URL", "Reranker base URL")} />
+                            <input
+                              className="input-field w-full"
+                              value={searchDraft.rerank.baseUrl}
+                              onChange={(event) =>
+                                setSearchField("rerank", "baseUrl", event.target.value)
+                              }
+                              placeholder="https://api.your-reranker.com"
+                              autoComplete="off"
+                            />
+                          </label>
+                          <label className="space-y-2">
+                            <FieldLabel label={t("Reranker API Key", "Reranker API key")} />
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type={showRerankKey ? "text" : "password"}
+                                className="input-field w-full flex-1"
+                                value={searchDraft.rerank.apiKey}
+                                onChange={(event) =>
+                                  setSearchField("rerank", "apiKey", event.target.value)
+                                }
+                                placeholder="key-..."
+                                autoComplete="new-password"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setShowRerankKey((prev) => !prev)}
+                                className="outline-button rounded-full px-4 py-2 text-xs font-semibold"
+                                aria-pressed={showRerankKey}
+                                aria-label={
+                                  showRerankKey
+                                    ? t("隐藏 Reranker API Key", "Hide reranker API key")
+                                    : t("显示 Reranker API Key", "Show reranker API key")
+                                }
+                              >
+                                {showRerankKey ? t("隐藏", "Hide") : t("显示", "Show")}
+                              </button>
+                            </div>
+                            {hasStoredRerankKey && !searchDraft.rerank.apiKey.trim() ? (
+                              <div className="text-xs text-slate-500">
+                                {t(
+                                  "留空则使用已保存的 Key（修改 Base URL 时需重新填写）。",
+                                  "Leave blank to keep the saved key (re-enter if base URL changes)."
+                                )}
+                              </div>
+                            ) : null}
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="mt-3 text-xs text-slate-500">
+                          {searchDraft.rerank.enabled
+                            ? t(
+                                "已启用，点击“展开”可调整配置。",
+                                "Enabled. Click expand to edit."
+                              )
+                            : t(
+                                "未启用，展开后可提前填写配置。",
+                                "Disabled. Expand to prefill settings."
+                              )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/70 bg-white/80 px-4 py-4">
+                    <label className="space-y-2">
+                      <FieldLabel label={t("AI 匹配下限", "AI match threshold")} />
+                      <div className="flex flex-wrap items-center gap-3">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={searchDraft.minScore}
+                          onChange={(event) => setSearchMinScore(Number(event.target.value))}
+                          className="h-2 flex-1 cursor-pointer accent-slate-700"
+                        />
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          className="input-field w-20"
+                          value={searchDraft.minScore}
+                          onChange={(event) => setSearchMinScore(Number(event.target.value))}
+                        />
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {t(
+                          "低于该相似度的结果会被过滤。",
+                          "Results below this similarity are filtered out."
+                        )}
+                      </div>
+                    </label>
                   </div>
 
                   <div className="flex flex-wrap items-center gap-3">
