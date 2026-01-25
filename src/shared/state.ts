@@ -1,6 +1,7 @@
 import type { AppState, Category, ExaConfig, SearchConfig, SearchProvider } from "./types";
 import { DEFAULT_THEME_ID, isThemeId } from "./theme";
 import { translate } from "./i18n";
+import { createId } from "./ids";
 
 export const DEFAULT_CATEGORY_ID = "inbox";
 
@@ -161,10 +162,42 @@ export function normalizeState(value?: Partial<AppState>): AppState {
     hasDefault ? categories : [DEFAULT_CATEGORY, ...categories]
   );
   const categoryIds = new Set(mergedCategories.map((category) => category.id));
-  const normalizedRules = rules.map((rule) => ({
-    ...rule,
-    categoryId: categoryIds.has(rule.categoryId) ? rule.categoryId : DEFAULT_CATEGORY_ID
-  }));
+  const normalizedRules = rules
+    .map((rule) => {
+      const rawRule = rule as {
+        id?: unknown;
+        type?: unknown;
+        value?: unknown;
+        domain?: unknown;
+        categoryId?: unknown;
+        createdAt?: unknown;
+      };
+      const type =
+        rawRule.type === "domain" || rawRule.type === "urlPrefix" || rawRule.type === "natural"
+          ? rawRule.type
+          : "domain";
+      const rawValue =
+        typeof rawRule.value === "string"
+          ? rawRule.value
+          : typeof rawRule.domain === "string"
+            ? rawRule.domain
+            : "";
+      const value = rawValue.trim();
+      if (!value) {
+        return null;
+      }
+      const id = typeof rawRule.id === "string" && rawRule.id ? rawRule.id : createId();
+      const categoryId =
+        typeof rawRule.categoryId === "string" && categoryIds.has(rawRule.categoryId)
+          ? rawRule.categoryId
+          : DEFAULT_CATEGORY_ID;
+      const createdAt =
+        typeof rawRule.createdAt === "number" && Number.isFinite(rawRule.createdAt)
+          ? rawRule.createdAt
+          : Date.now();
+      return { id, type, value, categoryId, createdAt };
+    })
+    .filter(Boolean) as AppState["rules"];
   const normalizedBookmarks = bookmarks.map((bookmark) => {
     const excerpt = typeof bookmark.excerpt === "string" ? bookmark.excerpt : "";
     const summaryLongRaw = (bookmark as { summaryLong?: unknown }).summaryLong;
