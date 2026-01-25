@@ -59,6 +59,7 @@ function CategoryBadge({ category }: { category: Category }) {
 const CATEGORY_ALL = "all";
 
 type BookmarkSortMode = "recent" | "oldest" | "title";
+type SettingsTab = "categories" | "bookmarks" | "ai";
 type ImportMode = "merge" | "replace";
 const BOOKMARK_EXPORT_TYPE = "favortex-bookmarks";
 
@@ -150,6 +151,16 @@ export default function App() {
   const [bookmarkQuery, setBookmarkQuery] = useState("");
   const [bookmarkSortMode, setBookmarkSortMode] = useState<BookmarkSortMode>("recent");
   const [bookmarkCategoryId, setBookmarkCategoryId] = useState(CATEGORY_ALL);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(() => {
+    if (typeof window === "undefined") {
+      return "categories";
+    }
+    const param = new URLSearchParams(window.location.search).get("tab");
+    if (param === "bookmarks" || param === "ai" || param === "categories") {
+      return param;
+    }
+    return "categories";
+  });
   const [importMode, setImportMode] = useState<ImportMode>("merge");
   const [dataStatus, setDataStatus] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"success" | "error">("success");
@@ -167,6 +178,18 @@ export default function App() {
     document.documentElement.lang = getLanguageTag(locale);
     document.title = t("Favortex 设置中心", "Favortex Settings");
   }, [locale, t]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const param = new URLSearchParams(window.location.search).get("tab");
+    const nextTab =
+      param === "bookmarks" || param === "ai" || param === "categories" ? param : "categories";
+    if (nextTab !== activeTab) {
+      setActiveTab(nextTab);
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     if (state) {
@@ -990,6 +1013,17 @@ export default function App() {
     importInputRef.current?.click();
   }, []);
 
+  const handleTabChange = useCallback((value: string) => {
+    const nextTab =
+      value === "bookmarks" || value === "ai" || value === "categories" ? value : "categories";
+    setActiveTab(nextTab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", nextTab);
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
   const clearBookmarks = useCallback(() => {
     if (!state?.bookmarks.length) {
       setTransientStatus(t("暂无可清理的收藏", "No bookmarks to clear."), "error");
@@ -1120,120 +1154,122 @@ export default function App() {
 
   return (
     <div className="page-scroll px-6 py-8">
-      <div className="mx-auto flex max-w-5xl flex-col gap-6">
-        <header className="glass-card rounded-[32px] px-6 py-6">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <span className="chip">{t("设置", "Setup")}</span>
-              <h1 className="mt-3 text-2xl font-semibold text-slate-900">
-                {t("Favortex 设置中心", "Favortex Settings")}
-              </h1>
-              <p className="mt-2 text-sm text-slate-600">
-                {t(
-                  "配置分类、规则和 AI 供应商，让收藏自动完成。",
-                  "Configure categories, rules, and AI providers to automate your saves."
-                )}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-xs text-slate-600">
-              {t("快捷键默认: {shortcut}", "Default shortcut: {shortcut}", {
-                shortcut: "Ctrl+Shift+Y"
-              })}
-            </div>
-          </div>
-        </header>
-
-        <section className="glass-card rounded-[28px] px-6 py-5">
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-slate-900">
-                {t("主题色", "Theme")}
-              </h2>
-              <p className="mt-1 text-sm text-slate-600">
-                {t("选择一个舒适的主色调。", "Pick a comfortable primary tone.")}
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-3">
-              {THEMES.map((theme) => {
-                const themeLabel = locale === "zh" ? theme.label.zh : theme.label.en;
-                return (
-                  <button
-                    key={theme.id}
-                    type="button"
-                    onClick={() => setTheme(theme.id)}
-                    className="flex flex-col items-center gap-1 rounded-2xl px-2 py-1 text-xs text-slate-600 transition hover:text-slate-900"
-                    aria-pressed={activeTheme === theme.id}
-                    aria-label={t("切换主题色：{name}", "Switch theme: {name}", {
-                      name: themeLabel
-                    })}
-                  >
-                    <span
-                      className={clsx(
-                        "theme-swatch",
-                        activeTheme === theme.id && "is-active"
-                      )}
-                      data-theme={theme.id}
-                    />
-                    <span>{themeLabel}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2">
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
+      <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,0.65fr)]">
+          <header className="glass-card rounded-[32px] px-6 py-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
-                <div className="text-sm font-semibold text-slate-800">
-                  {t("简洁模式", "Compact mode")}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
+                <span className="chip">{t("设置", "Setup")}</span>
+                <h1 className="mt-3 text-2xl font-semibold text-slate-900">
+                  {t("Favortex 设置中心", "Favortex Settings")}
+                </h1>
+                <p className="mt-2 text-sm text-slate-600">
                   {t(
-                    "弹窗列表仅展示标题，悬浮后显示操作按钮。",
-                    "Only show titles in the popup. Actions appear on hover."
+                    "配置分类、规则和 AI 供应商，让收藏自动完成。",
+                    "Configure categories, rules, and AI providers to automate your saves."
                   )}
-                </div>
+                </p>
               </div>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-slate-700"
-                  checked={compactMode}
-                  onChange={(event) => setCompactMode(event.target.checked)}
-                  disabled={!state}
-                />
-                {t("启用", "Enable")}
-              </label>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
-              <div>
-                <div className="text-sm font-semibold text-slate-800">
-                  {t("显示模式", "Display mode")}
-                </div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {t("可跟随系统或手动指定深浅色。", "Follow system or choose light/dark.")}
-                </div>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {colorModeOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setColorMode(option.value)}
-                    className={clsx(
-                      "rounded-full px-4 py-2 text-xs font-semibold transition",
-                      colorMode === option.value ? "gradient-button" : "outline-button"
-                    )}
-                    aria-pressed={colorMode === option.value}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+              <div className="rounded-2xl border border-white/60 bg-white/70 px-4 py-3 text-xs text-slate-600">
+                {t("快捷键默认: {shortcut}", "Default shortcut: {shortcut}", {
+                  shortcut: "Ctrl+Shift+Y"
+                })}
               </div>
             </div>
-          </div>
-        </section>
+          </header>
 
-        <Tabs.Root defaultValue="categories" className="glass-card rounded-[32px] px-6 py-6">
+          <section className="glass-card rounded-[28px] px-6 py-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">
+                  {t("外观设置", "Appearance")}
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">
+                  {t("调整主题色与显示偏好。", "Tune your theme and display preferences.")}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                {THEMES.map((theme) => {
+                  const themeLabel = locale === "zh" ? theme.label.zh : theme.label.en;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      onClick={() => setTheme(theme.id)}
+                      className="flex flex-col items-center gap-1 rounded-2xl px-2 py-1 text-xs text-slate-600 transition hover:text-slate-900"
+                      aria-pressed={activeTheme === theme.id}
+                      aria-label={t("切换主题色：{name}", "Switch theme: {name}", {
+                        name: themeLabel
+                      })}
+                    >
+                      <span
+                        className={clsx(
+                          "theme-swatch",
+                          activeTheme === theme.id && "is-active"
+                        )}
+                        data-theme={theme.id}
+                      />
+                      <span>{themeLabel}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="mt-5 grid gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">
+                    {t("简洁模式", "Compact mode")}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {t(
+                      "弹窗列表仅展示标题，悬浮后显示操作按钮。",
+                      "Only show titles in the popup. Actions appear on hover."
+                    )}
+                  </div>
+                </div>
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-slate-700"
+                    checked={compactMode}
+                    onChange={(event) => setCompactMode(event.target.checked)}
+                    disabled={!state}
+                  />
+                  {t("启用", "Enable")}
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/60 bg-white/80 px-4 py-3">
+                <div>
+                  <div className="text-sm font-semibold text-slate-800">
+                    {t("显示模式", "Display mode")}
+                  </div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {t("可跟随系统或手动指定深浅色。", "Follow system or choose light/dark.")}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {colorModeOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setColorMode(option.value)}
+                      className={clsx(
+                        "rounded-full px-4 py-2 text-xs font-semibold transition",
+                        colorMode === option.value ? "gradient-button" : "outline-button"
+                      )}
+                      aria-pressed={colorMode === option.value}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <Tabs.Root value={activeTab} onValueChange={handleTabChange} className="glass-card rounded-[32px] px-6 py-6">
           <Tabs.List className="flex flex-wrap gap-2">
             {[
               { value: "categories", label: t("分类", "Categories") },
