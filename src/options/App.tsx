@@ -15,6 +15,7 @@ import {
 import clsx from "clsx";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
+import { classifyWithAi, suggestSubCategoryWithAi } from "../shared/ai";
 import { COLOR_PALETTE } from "../shared/colors";
 import { useAppState } from "../shared/hooks";
 import { DEFAULT_CATEGORY_ID, DEFAULT_STATE, normalizeState } from "../shared/state";
@@ -30,7 +31,12 @@ import type {
   SearchProvider,
   SearchProviderConfig
 } from "../shared/types";
-import { buildEmbeddingFingerprint, getDomain } from "../shared/utils";
+import {
+  buildEmbeddingFingerprint,
+  domainMatches,
+  getDomain,
+  urlPrefixMatches
+} from "../shared/utils";
 import { createId } from "../shared/ids";
 import { getLanguageTag, useI18n } from "../shared/i18n";
 
@@ -61,6 +67,251 @@ const CATEGORY_ALL = "all";
 type BookmarkSortMode = "recent" | "oldest" | "title";
 type ImportMode = "merge" | "replace";
 const BOOKMARK_EXPORT_TYPE = "favortex-bookmarks";
+const SMART_AI_LIMIT = 60;
+const SUBCATEGORY_AI_LIMIT = 40;
+const HEALTH_CHECK_CONCURRENCY = 8;
+const HEALTH_CHECK_TIMEOUT_MS = 4500;
+
+const ROOT_FOLDER_PATTERNS = [
+  /bookmarks bar/i,
+  /bookmarks toolbar/i,
+  /bookmarks menu/i,
+  /other bookmarks/i,
+  /other favorites/i,
+  /mobile bookmarks/i,
+  /favorites bar/i,
+  /收藏夹栏/,
+  /收藏栏/,
+  /书签栏/,
+  /书签工具栏/,
+  /书签菜单/,
+  /其他收藏/,
+  /移动设备收藏/
+];
+
+type SuggestionConfidence = "high" | "medium" | "low";
+
+type SmartSuggestion = {
+  bookmarkId: string;
+  targetCategoryId?: string;
+  suggestedCategoryName?: string;
+  suggestedSubCategory?: string;
+  reason: string;
+  confidence: SuggestionConfidence;
+  selected: boolean;
+};
+
+type FlattenedBrowserBookmark = {
+  url: string;
+  title: string;
+  folderPath?: string;
+  subCategory?: string;
+  createdAt: number;
+};
+
+type SuggestionTreeLeaf = {
+  subCategory: string;
+  items: SmartSuggestion[];
+};
+
+type SuggestionTreeGroup = {
+  categoryLabel: string;
+  categoryKey: string;
+  defaultTargetCategoryId?: string;
+  isExistingCategory: boolean;
+  leaves: SuggestionTreeLeaf[];
+  total: number;
+};
+
+type SuggestionPreviewItem = {
+  bookmarkId: string;
+  title: string;
+  url: string;
+  fromCategoryName: string;
+  toCategoryName: string;
+  subCategory?: string;
+};
+
+type DeadLinkIssue = {
+  bookmarkId: string;
+  url: string;
+  title: string;
+  category: "dead" | "restricted" | "temporary" | "unknown";
+  statusCode?: number;
+  reason: string;
+  selected: boolean;
+};
+
+type UrlHealthResult =
+  | { ok: true; statusCode: number }
+  | {
+      ok: false;
+      category: DeadLinkIssue["category"];
+      statusCode?: number;
+      reason:
+        | "invalid-url"
+        | "unsupported-protocol"
+        | "timeout"
+        | "network"
+        | "http-error";
+    };
+
+function isBrowserRootFolder(name: string) {
+  const normalized = normalizeFolderName(name);
+  if (!normalized) {
+    return false;
+  }
+  return ROOT_FOLDER_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function classifyStatusCategory(statusCode: number): DeadLinkIssue["category"] {
+  if (statusCode === 404 || statusCode === 410 || statusCode === 451) {
+    return "dead";
+  }
+  if (statusCode === 401 || statusCode === 403) {
+    return "restricted";
+  }
+  if (statusCode === 408 || statusCode === 425 || statusCode === 429) {
+    return "temporary";
+  }
+  if (statusCode >= 500) {
+    return "temporary";
+  }
+  if (statusCode >= 400) {
+    return "unknown";
+  }
+  return "unknown";
+}
+
+async function probeUrlHealth(url: string): Promise<UrlHealthResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: false, reason: "invalid-url", category: "unknown" as const };
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return {
+      ok: false,
+      reason: "unsupported-protocol",
+      category: "unknown" as const
+    };
+  }
+
+  const requestOnce = async (method: "HEAD" | "GET"): Promise<UrlHealthResult> => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+    try {
+      const response = await fetch(url, {
+        method,
+        cache: "no-store",
+        redirect: "follow",
+        signal: controller.signal
+      });
+      if (response.status >= 400) {
+        return {
+          ok: false as const,
+          reason: "http-error" as const,
+          statusCode: response.status,
+          category: classifyStatusCategory(response.status)
+        };
+      }
+      return { ok: true as const, statusCode: response.status };
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        return {
+          ok: false as const,
+          reason: "timeout" as const,
+          category: "temporary" as const
+        };
+      }
+      return {
+        ok: false as const,
+        reason: "network" as const,
+        category: "unknown" as const
+      };
+    } finally {
+      window.clearTimeout(timer);
+    }
+  };
+
+  const headResult = await requestOnce("HEAD");
+  if (headResult.ok) {
+    return headResult;
+  }
+  if (
+    headResult.reason === "http-error" &&
+    (headResult.statusCode === 405 || headResult.statusCode === 501)
+  ) {
+    return requestOnce("GET");
+  }
+  return headResult;
+}
+
+function getRuleSpecificity(rule: Rule) {
+  const value = rule.value.trim().toLowerCase();
+  if (rule.type === "urlPrefix") {
+    return value.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").length;
+  }
+  return value.length;
+}
+
+function normalizeFolderName(name: string) {
+  return name
+    .replace(/[<>:"/\\|?*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitFolderPath(folderPath?: string) {
+  if (!folderPath) {
+    return [];
+  }
+  return folderPath
+    .split("/")
+    .map((segment) => normalizeFolderName(segment))
+    .filter(Boolean)
+    .filter((segment) => !isBrowserRootFolder(segment));
+}
+
+function flattenBrowserTree(
+  nodes: chrome.bookmarks.BookmarkTreeNode[],
+  parents: string[] = []
+): FlattenedBrowserBookmark[] {
+  const output: FlattenedBrowserBookmark[] = [];
+  nodes.forEach((node) => {
+    if (node.url) {
+      const segments = parents
+        .map((segment) => normalizeFolderName(segment))
+        .filter(Boolean)
+        .filter((segment) => !isBrowserRootFolder(segment));
+      const folderPath = segments.length ? segments.join(" / ") : undefined;
+      output.push({
+        url: node.url,
+        title: node.title || node.url,
+        folderPath,
+        subCategory: segments.length > 1 ? segments.slice(1).join(" / ") : undefined,
+        createdAt:
+          typeof node.dateAdded === "number" && Number.isFinite(node.dateAdded)
+            ? node.dateAdded
+            : Date.now()
+      });
+      return;
+    }
+    if (Array.isArray(node.children) && node.children.length) {
+      const nextParents = node.title ? [...parents, node.title] : parents;
+      output.push(...flattenBrowserTree(node.children, nextParents));
+    }
+  });
+  return output;
+}
+
+function pickCategoryColor(name: string) {
+  const palette = COLOR_PALETTE.map((item) => item.className);
+  const seed = Array.from(name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return palette[seed % palette.length] ?? COLOR_PALETTE[0].className;
+}
 
 function formatDate(dateFormatter: Intl.DateTimeFormat, timestamp: number) {
   return dateFormatter.format(new Date(timestamp));
@@ -86,23 +337,35 @@ function mergeBookmarks(current: Bookmark[], incoming: Bookmark[]) {
       return;
     }
     const isIncomingNewer = bookmark.createdAt > existing.createdAt;
-    const source = isIncomingNewer ? bookmark : existing;
+    const incomingHasFolderHint =
+      bookmark.source === "browser-import" &&
+      Boolean(bookmark.folderPath || bookmark.subCategory || bookmark.categoryId !== DEFAULT_CATEGORY_ID);
+    const source = isIncomingNewer || incomingHasFolderHint ? bookmark : existing;
     let embedding = existing.embedding;
     let embeddingFingerprint = existing.embeddingFingerprint;
     if (isIncomingNewer && Array.isArray(bookmark.embedding)) {
       embedding = bookmark.embedding;
       embeddingFingerprint = bookmark.embeddingFingerprint || undefined;
     }
+    const categoryId =
+      incomingHasFolderHint && bookmark.categoryId
+        ? bookmark.categoryId
+        : source.categoryId || existing.categoryId;
     map.set(bookmark.url, {
+      ...existing,
+      ...source,
       id: existing.id,
       url: existing.url,
-      title: source.title,
-      excerpt: source.excerpt,
-      summaryLong: source.summaryLong || source.excerpt,
+      title: source.title || existing.title,
+      excerpt: source.excerpt || existing.excerpt,
+      summaryLong: source.summaryLong || source.excerpt || existing.summaryLong || existing.excerpt,
       embedding,
       embeddingFingerprint,
       favicon: source.favicon ?? existing.favicon,
-      categoryId: source.categoryId,
+      categoryId,
+      source: source.source ?? existing.source,
+      folderPath: source.folderPath ?? existing.folderPath,
+      subCategory: source.subCategory ?? existing.subCategory,
       pinned: existing.pinned || bookmark.pinned,
       createdAt: Math.max(existing.createdAt, bookmark.createdAt)
     });
@@ -135,6 +398,33 @@ function mergeState(current: AppState, incoming: AppState): AppState {
   return normalizeState(merged);
 }
 
+function buildAutoNaturalRuleValue(categoryName: string, subCategoryHints: string[] = []) {
+  const normalizedName = normalizeFolderName(categoryName) || categoryName.trim();
+  if (!normalizedName) {
+    return "";
+  }
+  const hints = Array.from(
+    new Set(
+      subCategoryHints
+        .map((hint) => normalizeFolderName(hint))
+        .filter(Boolean)
+        .slice(0, 3)
+    )
+  );
+  const suffix = hints.length > 0 ? ` 典型子主题：${hints.join(" / ")}。` : "";
+  return `与“${normalizedName}”相关的网页内容优先归入该分类。${suffix}`.trim();
+}
+
+function buildAutoNaturalRule(categoryId: string, categoryName: string, subCategoryHints: string[] = []): Rule {
+  return {
+    id: createId(),
+    type: "natural",
+    value: buildAutoNaturalRuleValue(categoryName, subCategoryHints),
+    categoryId,
+    createdAt: Date.now()
+  };
+}
+
 export default function App() {
   const { state, update } = useAppState();
   const { t, locale } = useI18n();
@@ -158,6 +448,27 @@ export default function App() {
   const [showExaKey, setShowExaKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
   const [showRerankKey, setShowRerankKey] = useState(false);
+  const [smartSuggestions, setSmartSuggestions] = useState<SmartSuggestion[]>([]);
+  const [smartBusy, setSmartBusy] = useState(false);
+  const [smartProgress, setSmartProgress] = useState<{ done: number; total: number }>({
+    done: 0,
+    total: 0
+  });
+  const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>({});
+  const [collapsedLeaves, setCollapsedLeaves] = useState<Record<string, boolean>>({});
+  const [groupTargetDrafts, setGroupTargetDrafts] = useState<Record<string, string>>({});
+  const [groupNewNameDrafts, setGroupNewNameDrafts] = useState<Record<string, string>>({});
+  const [itemTargetDrafts, setItemTargetDrafts] = useState<Record<string, string>>({});
+  const [itemNewNameDrafts, setItemNewNameDrafts] = useState<Record<string, string>>({});
+  const [showHighConfidenceOnly, setShowHighConfidenceOnly] = useState(false);
+  const [showMissingSubCategoryOnly, setShowMissingSubCategoryOnly] = useState(false);
+  const [applyPreviewOpen, setApplyPreviewOpen] = useState(false);
+  const [deadLinkIssues, setDeadLinkIssues] = useState<DeadLinkIssue[]>([]);
+  const [deadLinkCheckBusy, setDeadLinkCheckBusy] = useState(false);
+  const [deadLinkCheckProgress, setDeadLinkCheckProgress] = useState<{ done: number; total: number }>({
+    done: 0,
+    total: 0
+  });
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const aiImportInputRef = useRef<HTMLInputElement | null>(null);
   const statusTimerRef = useRef<number | null>(null);
@@ -202,6 +513,87 @@ export default function App() {
         window.clearTimeout(statusTimerRef.current);
       }
     };
+  }, []);
+
+  useEffect(() => {
+    const isSameOriginResource = (href: string) => {
+      try {
+        const parsed = new URL(href, window.location.href);
+        return parsed.origin === window.location.origin;
+      } catch {
+        return false;
+      }
+    };
+
+    const purgeExternalResourceTags = (nodes: Iterable<Element>) => {
+      for (const node of nodes) {
+        if (node instanceof HTMLLinkElement) {
+          const rel = node.rel.toLowerCase();
+          if (!rel.includes("stylesheet")) {
+            continue;
+          }
+          const href = node.href || node.getAttribute("href") || "";
+          if (!href || isSameOriginResource(href)) {
+            continue;
+          }
+          node.remove();
+          continue;
+        }
+
+        if (!(node instanceof HTMLScriptElement)) {
+          continue;
+        }
+        const src = node.src || node.getAttribute("src") || "";
+        if (!src || isSameOriginResource(src)) {
+          continue;
+        }
+        node.remove();
+      }
+    };
+
+    purgeExternalResourceTags(
+      document.head.querySelectorAll('link[rel*="stylesheet" i], script[src]')
+    );
+
+    const observer = new MutationObserver((mutations) => {
+      for (const mutation of mutations) {
+        if (
+          mutation.type === "attributes" &&
+          (mutation.target instanceof HTMLLinkElement || mutation.target instanceof HTMLScriptElement)
+        ) {
+          purgeExternalResourceTags([mutation.target]);
+          continue;
+        }
+        if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
+          const addedResources: (HTMLLinkElement | HTMLScriptElement)[] = [];
+          mutation.addedNodes.forEach((node) => {
+            if (node instanceof HTMLLinkElement) {
+              addedResources.push(node);
+            } else if (node instanceof HTMLScriptElement) {
+              addedResources.push(node);
+            } else if (node instanceof HTMLElement) {
+              node
+                .querySelectorAll<HTMLLinkElement | HTMLScriptElement>(
+                  'link[rel*="stylesheet" i], script[src]'
+                )
+                .forEach((resource) => addedResources.push(resource));
+            }
+          });
+          if (addedResources.length > 0) {
+            purgeExternalResourceTags(addedResources);
+          }
+        }
+      }
+    });
+
+    observer.observe(document.head, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["href", "rel", "src"]
+    });
+
+    return () => observer.disconnect();
   }, []);
 
   const sortedCategories = useMemo(() => {
@@ -986,6 +1378,878 @@ export default function App() {
     [importMode, update, setTransientStatus, t]
   );
 
+  const runSmartSuggestions = useCallback(
+    async (scopedUrls?: Set<string>) => {
+      if (!state) {
+        return;
+      }
+      const targets = state.bookmarks.filter((bookmark) =>
+        scopedUrls ? scopedUrls.has(bookmark.url) : true
+      );
+      if (!targets.length) {
+        setTransientStatus(t("没有可分析的收藏。", "No bookmarks to analyze."), "error");
+        return;
+      }
+
+      setSmartBusy(true);
+      setSmartProgress({ done: 0, total: targets.length });
+      const suggestions = new Map<string, SmartSuggestion>();
+      const categoriesByName = new Map(
+        state.categories.map((category) => [category.name.trim().toLowerCase(), category])
+      );
+      const categoryNameById = new Map(state.categories.map((category) => [category.id, category.name]));
+      const knownSubCategoriesByCategory = new Map<string, Set<string>>();
+      state.bookmarks.forEach((bookmark) => {
+        const subCategory = (bookmark.subCategory || "").trim();
+        if (!subCategory || bookmark.categoryId === DEFAULT_CATEGORY_ID) {
+          return;
+        }
+        const known = knownSubCategoriesByCategory.get(bookmark.categoryId) ?? new Set<string>();
+        known.add(subCategory);
+        knownSubCategoriesByCategory.set(bookmark.categoryId, known);
+      });
+      const domainVotes = new Map<string, Map<string, number>>();
+      state.bookmarks.forEach((bookmark) => {
+        const domain = getDomain(bookmark.url);
+        if (!domain || bookmark.categoryId === DEFAULT_CATEGORY_ID) {
+          return;
+        }
+        const byCategory = domainVotes.get(domain) ?? new Map<string, number>();
+        byCategory.set(bookmark.categoryId, (byCategory.get(bookmark.categoryId) ?? 0) + 1);
+        domainVotes.set(domain, byCategory);
+      });
+
+      const aiCandidates: Bookmark[] = [];
+
+      targets.forEach((bookmark) => {
+        const domain = getDomain(bookmark.url);
+        const matchedRule = state.rules
+          .filter((rule) => {
+            if (rule.type === "domain") {
+              return domainMatches(rule.value, domain);
+            }
+            if (rule.type === "urlPrefix") {
+              return urlPrefixMatches(rule.value, bookmark.url);
+            }
+            return false;
+          })
+          .sort((a, b) => getRuleSpecificity(b) - getRuleSpecificity(a))[0];
+        if (matchedRule && matchedRule.categoryId !== bookmark.categoryId) {
+          suggestions.set(bookmark.id, {
+            bookmarkId: bookmark.id,
+            targetCategoryId: matchedRule.categoryId,
+            suggestedSubCategory: bookmark.subCategory,
+            reason: t("命中规则：{value}", "Rule matched: {value}", { value: matchedRule.value }),
+            confidence: "high",
+            selected: true
+          });
+          return;
+        }
+
+        const folderSegments = (bookmark.folderPath || "")
+          .split("/")
+          .map((segment) => segment.trim())
+          .filter(Boolean);
+        const topFolder = folderSegments[0] || "";
+        const subFolder = folderSegments.length > 1 ? folderSegments.slice(1).join(" / ") : "";
+        if (topFolder) {
+          const existing = categoriesByName.get(topFolder.toLowerCase());
+          if (existing && existing.id !== bookmark.categoryId) {
+            suggestions.set(bookmark.id, {
+              bookmarkId: bookmark.id,
+              targetCategoryId: existing.id,
+              suggestedSubCategory: subFolder || bookmark.subCategory,
+              reason: t("来自导入目录：{name}", "Imported folder hint: {name}", { name: topFolder }),
+              confidence: "high",
+              selected: true
+            });
+            return;
+          }
+          if (!existing && bookmark.categoryId === DEFAULT_CATEGORY_ID) {
+            suggestions.set(bookmark.id, {
+              bookmarkId: bookmark.id,
+              suggestedCategoryName: topFolder,
+              suggestedSubCategory: subFolder || bookmark.subCategory,
+              reason: t("建议按导入目录创建分组", "Suggest creating a category from folder path."),
+              confidence: "medium",
+              selected: true
+            });
+            return;
+          }
+        }
+
+        const votes = domainVotes.get(domain);
+        if (votes && votes.size > 0) {
+          let winnerId = "";
+          let winnerScore = 0;
+          votes.forEach((score, categoryId) => {
+            if (score > winnerScore) {
+              winnerId = categoryId;
+              winnerScore = score;
+            }
+          });
+          if (winnerId && winnerId !== bookmark.categoryId && winnerScore >= 2) {
+            suggestions.set(bookmark.id, {
+              bookmarkId: bookmark.id,
+              targetCategoryId: winnerId,
+              suggestedSubCategory: bookmark.subCategory,
+              reason: t("同域名历史归类一致性建议", "Suggested by same-domain history."),
+              confidence: "medium",
+              selected: true
+            });
+            return;
+          }
+        }
+
+        if (bookmark.categoryId === DEFAULT_CATEGORY_ID) {
+          aiCandidates.push(bookmark);
+        }
+      });
+
+      const canUseAi = state.ai.apiKey && state.ai.baseUrl && state.ai.model;
+      const aiQueue = canUseAi ? aiCandidates.slice(0, SMART_AI_LIMIT) : [];
+      let done = targets.length - aiQueue.length;
+      setSmartProgress({ done, total: targets.length });
+
+      for (const bookmark of aiQueue) {
+        try {
+          const result = await classifyWithAi(
+            state.ai,
+            state.categories,
+            state.rules,
+            bookmark.title || bookmark.url,
+            bookmark.url,
+            [bookmark.title, bookmark.summaryLong || bookmark.excerpt, bookmark.folderPath || ""]
+              .filter(Boolean)
+              .join("\n")
+          );
+          if (
+            result.categoryId !== DEFAULT_CATEGORY_ID &&
+            result.categoryId !== bookmark.categoryId &&
+            state.categories.some((category) => category.id === result.categoryId)
+          ) {
+            suggestions.set(bookmark.id, {
+              bookmarkId: bookmark.id,
+              targetCategoryId: result.categoryId,
+              suggestedSubCategory: bookmark.subCategory,
+              reason: t("AI 内容识别建议", "AI content-based suggestion."),
+              confidence: "medium",
+              selected: true
+            });
+          }
+        } catch {
+          // Ignore single-item AI failures to keep bulk suggestion flow running.
+        } finally {
+          done += 1;
+          setSmartProgress({ done, total: targets.length });
+        }
+      }
+
+      const subCategoryCandidates = targets
+        .map((bookmark) => {
+          const existingSuggestion = suggestions.get(bookmark.id);
+          const resolvedSubCategory = (
+            existingSuggestion?.suggestedSubCategory ||
+            bookmark.subCategory ||
+            ""
+          ).trim();
+          if (resolvedSubCategory) {
+            return null;
+          }
+          if (existingSuggestion?.targetCategoryId) {
+            const targetName = categoryNameById.get(existingSuggestion.targetCategoryId) || "";
+            if (!targetName) {
+              return null;
+            }
+            return {
+              bookmark,
+              targetCategoryId: existingSuggestion.targetCategoryId,
+              targetCategoryName: targetName,
+              suggestedCategoryName: undefined as string | undefined
+            };
+          }
+          if ((existingSuggestion?.suggestedCategoryName || "").trim()) {
+            const targetName = (existingSuggestion?.suggestedCategoryName || "").trim();
+            return {
+              bookmark,
+              targetCategoryId: undefined as string | undefined,
+              targetCategoryName: targetName,
+              suggestedCategoryName: targetName
+            };
+          }
+          if (bookmark.categoryId !== DEFAULT_CATEGORY_ID) {
+            const targetName = categoryNameById.get(bookmark.categoryId) || "";
+            if (!targetName) {
+              return null;
+            }
+            return {
+              bookmark,
+              targetCategoryId: bookmark.categoryId,
+              targetCategoryName: targetName,
+              suggestedCategoryName: undefined as string | undefined
+            };
+          }
+          return null;
+        })
+        .filter(Boolean) as {
+        bookmark: Bookmark;
+        targetCategoryId?: string;
+        targetCategoryName: string;
+        suggestedCategoryName?: string;
+      }[];
+
+      const subCategoryAiQueue = canUseAi ? subCategoryCandidates.slice(0, SUBCATEGORY_AI_LIMIT) : [];
+      if (subCategoryAiQueue.length > 0) {
+        setSmartProgress({ done, total: targets.length + subCategoryAiQueue.length });
+      }
+      for (const candidate of subCategoryAiQueue) {
+        try {
+          const existingSubCategories = candidate.targetCategoryId
+            ? Array.from(knownSubCategoriesByCategory.get(candidate.targetCategoryId) ?? [])
+            : [];
+          const result = await suggestSubCategoryWithAi(
+            state.ai,
+            candidate.bookmark.title || candidate.bookmark.url,
+            candidate.bookmark.url,
+            [
+              candidate.bookmark.title,
+              candidate.bookmark.summaryLong || candidate.bookmark.excerpt,
+              candidate.bookmark.folderPath || ""
+            ]
+              .filter(Boolean)
+              .join("\n"),
+            candidate.targetCategoryName,
+            existingSubCategories
+          );
+          if (result.subCategory) {
+            const existingSuggestion = suggestions.get(candidate.bookmark.id);
+            if (existingSuggestion) {
+              suggestions.set(candidate.bookmark.id, {
+                ...existingSuggestion,
+                suggestedSubCategory: result.subCategory,
+                reason: result.reason
+                  ? t("补全子分类：{reason}", "Subcategory hint: {reason}", { reason: result.reason })
+                  : existingSuggestion.reason
+              });
+            } else {
+              suggestions.set(candidate.bookmark.id, {
+                bookmarkId: candidate.bookmark.id,
+                targetCategoryId: candidate.targetCategoryId,
+                suggestedCategoryName: candidate.suggestedCategoryName,
+                suggestedSubCategory: result.subCategory,
+                reason: result.reason
+                  ? t("补全子分类：{reason}", "Subcategory hint: {reason}", { reason: result.reason })
+                  : t("AI 补全未分配子分类", "AI suggested a subcategory."),
+                confidence: result.confidence,
+                selected: true
+              });
+            }
+          }
+        } catch {
+          // Ignore single-item AI failures to keep bulk suggestion flow running.
+        } finally {
+          done += 1;
+          setSmartProgress({ done, total: targets.length + subCategoryAiQueue.length });
+        }
+      }
+
+      const next = Array.from(suggestions.values()).sort((a, b) => {
+        const rank: Record<SuggestionConfidence, number> = { high: 0, medium: 1, low: 2 };
+        return rank[a.confidence] - rank[b.confidence];
+      });
+      setSmartSuggestions(next);
+      setSmartBusy(false);
+      setTransientStatus(
+        t("已生成 {count} 条整理建议", "Generated {count} suggestions.", { count: next.length })
+      );
+    },
+    [state, t, setTransientStatus]
+  );
+
+  const importBrowserBookmarks = useCallback(async () => {
+    if (!chrome.bookmarks?.getTree) {
+      setTransientStatus(
+        t("当前环境不支持浏览器收藏读取。", "Browser bookmark API is unavailable."),
+        "error"
+      );
+      return;
+    }
+    try {
+      const tree = await new Promise<chrome.bookmarks.BookmarkTreeNode[]>((resolve, reject) => {
+        chrome.bookmarks.getTree((nodes) => {
+          const error = chrome.runtime.lastError;
+          if (error) {
+            reject(new Error(error.message));
+            return;
+          }
+          resolve(nodes);
+        });
+      });
+      const flattened = flattenBrowserTree(tree);
+      if (!flattened.length) {
+        setTransientStatus(t("未检测到可导入收藏。", "No importable bookmarks found."), "error");
+        return;
+      }
+      const importedRaw: Bookmark[] = flattened.map((item) => ({
+        id: createId(),
+        url: item.url,
+        title: item.title,
+        excerpt: "",
+        summaryLong: "",
+        categoryId: DEFAULT_CATEGORY_ID,
+        source: "browser-import",
+        folderPath: item.folderPath,
+        subCategory: item.subCategory,
+        pinned: false,
+        createdAt: item.createdAt
+      }));
+      const nextState = await update((current) => {
+        const categoriesByName = new Map(
+          current.categories.map((category) => [category.name.trim().toLowerCase(), category.id])
+        );
+        const createdCategories: Category[] = [];
+        const subCategoryHintsByCategory = new Map<string, Set<string>>();
+        const imported = importedRaw.map((bookmark) => {
+          const segments = splitFolderPath(bookmark.folderPath);
+          const topCategoryName = segments[0] || "";
+          const subCategory = segments.length > 1 ? segments.slice(1).join(" / ") : undefined;
+          if (!topCategoryName) {
+            return {
+              ...bookmark,
+              categoryId: DEFAULT_CATEGORY_ID,
+              subCategory
+            };
+          }
+          const key = topCategoryName.toLowerCase();
+          let categoryId = categoriesByName.get(key);
+          if (!categoryId) {
+            categoryId = createId();
+            categoriesByName.set(key, categoryId);
+            createdCategories.push({
+              id: categoryId,
+              name: topCategoryName,
+              color: pickCategoryColor(topCategoryName),
+              createdAt: Date.now()
+            });
+          }
+          if (subCategory) {
+            const hints = subCategoryHintsByCategory.get(categoryId) ?? new Set<string>();
+            hints.add(subCategory);
+            subCategoryHintsByCategory.set(categoryId, hints);
+          }
+          return {
+            ...bookmark,
+            categoryId,
+            subCategory
+          };
+        });
+        const createdRules = createdCategories
+          .map((category) => {
+            const hints = Array.from(subCategoryHintsByCategory.get(category.id) ?? []);
+            const rule = buildAutoNaturalRule(category.id, category.name, hints);
+            return rule.value ? rule : null;
+          })
+          .filter(Boolean) as Rule[];
+        const nextBookmarks =
+          importMode === "replace"
+            ? imported
+            : mergeBookmarks(current.bookmarks, imported);
+        return normalizeState({
+          ...current,
+          categories: [...current.categories, ...createdCategories],
+          rules: [...current.rules, ...createdRules],
+          bookmarks: nextBookmarks
+        });
+      });
+      const importedUrlSet = new Set(importedRaw.map((bookmark) => bookmark.url));
+      const importedFromState = nextState.bookmarks.filter((bookmark) =>
+        importedUrlSet.has(bookmark.url)
+      );
+      const unresolvedUrls = new Set(
+        importedFromState
+          .filter((bookmark) => bookmark.categoryId === DEFAULT_CATEGORY_ID)
+          .map((bookmark) => bookmark.url)
+      );
+      if (unresolvedUrls.size > 0) {
+        void runSmartSuggestions(unresolvedUrls);
+      } else {
+        setSmartSuggestions([]);
+      }
+      void (async () => {
+        if (!importedFromState.length) {
+          setDeadLinkIssues([]);
+          return;
+        }
+        setDeadLinkCheckBusy(true);
+        setDeadLinkCheckProgress({ done: 0, total: importedFromState.length });
+        const issues: DeadLinkIssue[] = [];
+        let cursor = 0;
+        let done = 0;
+
+        const workers = Array.from(
+          { length: Math.min(HEALTH_CHECK_CONCURRENCY, importedFromState.length) },
+          async () => {
+            while (true) {
+              const index = cursor;
+              cursor += 1;
+              if (index >= importedFromState.length) {
+                return;
+              }
+              const bookmark = importedFromState[index];
+              const health = await probeUrlHealth(bookmark.url);
+              if (!health.ok) {
+                const reason =
+                  health.reason === "http-error" && typeof health.statusCode === "number"
+                    ? health.statusCode === 404 || health.statusCode === 410 || health.statusCode === 451
+                      ? t(
+                          "页面不存在或已下线（{status}）",
+                          "Page not found or gone ({status})",
+                          { status: health.statusCode }
+                        )
+                      : health.statusCode === 401 || health.statusCode === 403
+                        ? t(
+                            "访问受限（{status}），可能需要登录/权限/风控验证",
+                            "Access restricted ({status}), may require login/permissions/challenge",
+                            { status: health.statusCode }
+                          )
+                        : health.statusCode === 429 || health.statusCode >= 500
+                          ? t(
+                              "服务暂时不可用（{status}），建议稍后重试",
+                              "Service temporary unavailable ({status}), retry later",
+                              { status: health.statusCode }
+                            )
+                          : t("HTTP 状态 {status}，请人工确认", "HTTP {status}, manual review needed", {
+                              status: health.statusCode
+                            })
+                    : health.reason === "timeout"
+                      ? t("连接超时，可能临时不可达", "Request timeout, possibly temporary")
+                      : health.reason === "unsupported-protocol"
+                        ? t("不支持的链接协议", "Unsupported URL protocol")
+                        : health.reason === "invalid-url"
+                          ? t("链接格式无效", "Invalid URL")
+                          : t("网络访问失败，可能被 CORS/风控拦截", "Network check failed, maybe blocked");
+                issues.push({
+                  bookmarkId: bookmark.id,
+                  url: bookmark.url,
+                  title: bookmark.title || bookmark.url,
+                  category: health.category,
+                  statusCode: health.statusCode,
+                  reason,
+                  selected: health.category === "dead" || health.reason === "invalid-url"
+                });
+              }
+              done += 1;
+              setDeadLinkCheckProgress({ done, total: importedFromState.length });
+            }
+          }
+        );
+        await Promise.all(workers);
+        setDeadLinkCheckBusy(false);
+        setDeadLinkIssues(issues);
+        if (issues.length > 0) {
+          const deadCount = issues.filter((item) => item.category === "dead").length;
+          setTransientStatus(
+            t(
+              "验活完成：疑似失效 {dead} 条，需人工确认 {other} 条。",
+              "Health check finished: likely dead {dead}, needs review {other}.",
+              { dead: deadCount, other: issues.length - deadCount }
+            ),
+            deadCount > 0 ? "error" : "success"
+          );
+        } else {
+          setTransientStatus(t("导入验活完成，未发现失效链接。", "Health check finished: no dead links."));
+        }
+      })();
+      setTransientStatus(
+        importMode === "replace"
+          ? t("已覆盖导入浏览器收藏 {count} 条", "Replaced with {count} browser bookmarks.", {
+              count: importedRaw.length
+            })
+          : t("已合并导入浏览器收藏 {count} 条", "Merged {count} browser bookmarks.", {
+              count: importedRaw.length
+            })
+      );
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : t("导入浏览器收藏失败", "Browser import failed.");
+      setTransientStatus(message, "error");
+    }
+  }, [importMode, runSmartSuggestions, setTransientStatus, t, update]);
+
+  const toggleDeadLinkSelected = useCallback((bookmarkId: string, selected: boolean) => {
+    setDeadLinkIssues((current) =>
+      current.map((item) => (item.bookmarkId === bookmarkId ? { ...item, selected } : item))
+    );
+  }, []);
+
+  const selectAllDeadLinkIssues = useCallback((selected: boolean) => {
+    setDeadLinkIssues((current) => current.map((item) => ({ ...item, selected })));
+  }, []);
+
+  const removeSelectedDeadLinks = useCallback(async () => {
+    const selected = deadLinkIssues.filter((item) => item.selected);
+    if (!selected.length) {
+      setTransientStatus(
+        t("请先选择要删除的失效链接。", "Select dead links to remove."),
+        "error"
+      );
+      return;
+    }
+    const idSet = new Set(selected.map((item) => item.bookmarkId));
+    await update((current) => ({
+      ...current,
+      bookmarks: current.bookmarks.filter((bookmark) => !idSet.has(bookmark.id))
+    }));
+    setDeadLinkIssues((current) => current.filter((item) => !idSet.has(item.bookmarkId)));
+    setTransientStatus(
+      t("已删除 {count} 条失效链接。", "Removed {count} dead links.", { count: selected.length })
+    );
+  }, [deadLinkIssues, setTransientStatus, t, update]);
+
+  const clearDeadLinkIssues = useCallback(() => {
+    setDeadLinkIssues([]);
+  }, []);
+
+  const toggleSuggestionSelected = useCallback((bookmarkId: string, selected: boolean) => {
+    setSmartSuggestions((current) =>
+      current.map((item) => (item.bookmarkId === bookmarkId ? { ...item, selected } : item))
+    );
+  }, []);
+
+  const setAllSuggestionSelection = useCallback(
+    (selected: boolean) => {
+      const visibleIds = new Set(
+        smartSuggestions
+          .filter((item) => {
+            if (showHighConfidenceOnly && item.confidence !== "high") {
+              return false;
+            }
+            if (showMissingSubCategoryOnly && (item.suggestedSubCategory || "").trim()) {
+              return false;
+            }
+            return true;
+          })
+          .map((item) => item.bookmarkId)
+      );
+      setSmartSuggestions((current) =>
+        current.map((item) =>
+          visibleIds.has(item.bookmarkId) ? { ...item, selected } : item
+        )
+      );
+    },
+    [showHighConfidenceOnly, showMissingSubCategoryOnly, smartSuggestions]
+  );
+
+  const setSuggestionSelectionByIds = useCallback((bookmarkIds: string[], selected: boolean) => {
+    const selectedSet = new Set(bookmarkIds);
+    setSmartSuggestions((current) =>
+      current.map((item) =>
+        selectedSet.has(item.bookmarkId) ? { ...item, selected } : item
+      )
+    );
+  }, []);
+
+  const toggleGroupCollapsed = useCallback((groupKey: string) => {
+    setCollapsedGroups((current) => ({
+      ...current,
+      [groupKey]: !current[groupKey]
+    }));
+  }, []);
+
+  const toggleLeafCollapsed = useCallback((leafKey: string) => {
+    setCollapsedLeaves((current) => ({
+      ...current,
+      [leafKey]: !current[leafKey]
+    }));
+  }, []);
+
+  const setAllSuggestionCollapsed = useCallback(
+    (groupKeys: string[], leafKeys: string[], collapsed: boolean) => {
+      const groupMap: Record<string, boolean> = {};
+      groupKeys.forEach((key) => {
+        groupMap[key] = collapsed;
+      });
+      const leafMap: Record<string, boolean> = {};
+      leafKeys.forEach((key) => {
+        leafMap[key] = collapsed;
+      });
+      setCollapsedGroups(groupMap);
+      setCollapsedLeaves(leafMap);
+    },
+    []
+  );
+
+  const updateGroupTargetDraft = useCallback((groupKey: string, value: string) => {
+    setGroupTargetDrafts((current) => ({
+      ...current,
+      [groupKey]: value
+    }));
+  }, []);
+
+  const updateGroupNewNameDraft = useCallback((groupKey: string, value: string) => {
+    setGroupNewNameDrafts((current) => ({
+      ...current,
+      [groupKey]: value
+    }));
+  }, []);
+
+  const setSuggestionTargetByIds = useCallback(
+    (bookmarkIds: string[], targetCategoryId?: string, categoryName?: string) => {
+      const idSet = new Set(bookmarkIds);
+      if (targetCategoryId) {
+        setItemTargetDrafts((current) => {
+          const next = { ...current };
+          bookmarkIds.forEach((bookmarkId) => {
+            next[bookmarkId] = targetCategoryId;
+          });
+          return next;
+        });
+      } else {
+        setItemTargetDrafts((current) => {
+          const next = { ...current };
+          bookmarkIds.forEach((bookmarkId) => {
+            next[bookmarkId] = "__new__";
+          });
+          return next;
+        });
+        if (categoryName !== undefined) {
+          setItemNewNameDrafts((current) => {
+            const next = { ...current };
+            bookmarkIds.forEach((bookmarkId) => {
+              next[bookmarkId] = categoryName;
+            });
+            return next;
+          });
+        }
+      }
+      setSmartSuggestions((current) =>
+        current.map((item) => {
+          if (!idSet.has(item.bookmarkId)) {
+            return item;
+          }
+          if (targetCategoryId) {
+            return {
+              ...item,
+              targetCategoryId,
+              suggestedCategoryName: undefined
+            };
+          }
+          return {
+            ...item,
+            targetCategoryId: undefined,
+            suggestedCategoryName: categoryName ?? item.suggestedCategoryName
+          };
+        })
+      );
+    },
+    []
+  );
+
+  const updateItemTargetDraft = useCallback((bookmarkId: string, value: string) => {
+    setItemTargetDrafts((current) => ({
+      ...current,
+      [bookmarkId]: value
+    }));
+  }, []);
+
+  const updateItemNewNameDraft = useCallback((bookmarkId: string, value: string) => {
+    setItemNewNameDrafts((current) => ({
+      ...current,
+      [bookmarkId]: value
+    }));
+  }, []);
+
+  const updateSuggestionCategory = useCallback((bookmarkId: string, categoryId: string) => {
+    setSmartSuggestions((current) =>
+      current.map((item) =>
+        item.bookmarkId === bookmarkId
+          ? {
+              ...item,
+              targetCategoryId: categoryId || undefined,
+              suggestedCategoryName: categoryId ? undefined : item.suggestedCategoryName
+            }
+          : item
+      )
+    );
+  }, []);
+
+  const updateSuggestionCategoryName = useCallback((bookmarkId: string, categoryName: string) => {
+    setSmartSuggestions((current) =>
+      current.map((item) =>
+        item.bookmarkId === bookmarkId
+          ? {
+              ...item,
+              targetCategoryId: undefined,
+              suggestedCategoryName: categoryName
+            }
+          : item
+      )
+    );
+  }, []);
+
+  const saveSuggestionItemDraft = useCallback(
+    (bookmarkId: string) => {
+      const targetValue = itemTargetDrafts[bookmarkId] ?? "__new__";
+      if (targetValue === "__new__") {
+        const categoryName = (itemNewNameDrafts[bookmarkId] || "").trim();
+        if (!categoryName) {
+          setTransientStatus(
+            t("请先填写该条建议的新分组名称。", "Please enter a new category name for this item."),
+            "error"
+          );
+          return;
+        }
+        updateSuggestionCategory(bookmarkId, "");
+        updateSuggestionCategoryName(bookmarkId, categoryName);
+        setTransientStatus(t("已保存此条设置。", "Item setting saved."));
+        return;
+      }
+      updateSuggestionCategory(bookmarkId, targetValue);
+      setTransientStatus(t("已保存此条设置。", "Item setting saved."));
+    },
+    [
+      itemTargetDrafts,
+      itemNewNameDrafts,
+      setTransientStatus,
+      t,
+      updateSuggestionCategory,
+      updateSuggestionCategoryName
+    ]
+  );
+
+  const dismissSelectedSuggestions = useCallback(() => {
+    setSmartSuggestions((current) => current.filter((item) => !item.selected));
+  }, []);
+
+  const collectSelectedSuggestions = useCallback(() => {
+    const selected = smartSuggestions.filter((item) => item.selected);
+    if (!selected.length) {
+      setTransientStatus(t("请先选择要应用的建议。", "Select suggestions to apply."), "error");
+      return null;
+    }
+    const missingTarget = selected.filter(
+      (item) => !item.targetCategoryId && !(item.suggestedCategoryName || "").trim()
+    );
+    if (missingTarget.length > 0) {
+      setTransientStatus(
+        t(
+          "有 {count} 条建议缺少目标分组，请先补全后再应用。",
+          "{count} selected suggestions are missing a target category.",
+          { count: missingTarget.length }
+        ),
+        "error"
+      );
+      return null;
+    }
+    return selected;
+  }, [smartSuggestions, t, setTransientStatus]);
+
+  const applySelectedSuggestions = useCallback(async () => {
+    const selected = collectSelectedSuggestions();
+    if (!selected) {
+      return false;
+    }
+
+    await update((current) => {
+      const categoriesByName = new Map(
+        current.categories.map((category) => [category.name.trim().toLowerCase(), category.id])
+      );
+      const createdCategories: Category[] = [];
+      const subCategoryHintsByCategory = new Map<string, Set<string>>();
+      const resolvedTargets = new Map<string, { categoryId: string; subCategory?: string }>();
+
+      selected.forEach((item) => {
+        if (item.targetCategoryId) {
+          resolvedTargets.set(item.bookmarkId, {
+            categoryId: item.targetCategoryId,
+            subCategory: item.suggestedSubCategory
+          });
+          if (item.suggestedSubCategory) {
+            const hints = subCategoryHintsByCategory.get(item.targetCategoryId) ?? new Set<string>();
+            hints.add(item.suggestedSubCategory);
+            subCategoryHintsByCategory.set(item.targetCategoryId, hints);
+          }
+          return;
+        }
+        const name = (item.suggestedCategoryName || "").trim();
+        if (!name) {
+          return;
+        }
+        const existingId = categoriesByName.get(name.toLowerCase());
+        if (existingId) {
+          resolvedTargets.set(item.bookmarkId, {
+            categoryId: existingId,
+            subCategory: item.suggestedSubCategory
+          });
+          if (item.suggestedSubCategory) {
+            const hints = subCategoryHintsByCategory.get(existingId) ?? new Set<string>();
+            hints.add(item.suggestedSubCategory);
+            subCategoryHintsByCategory.set(existingId, hints);
+          }
+          return;
+        }
+        const categoryId = createId();
+        categoriesByName.set(name.toLowerCase(), categoryId);
+        resolvedTargets.set(item.bookmarkId, {
+          categoryId,
+          subCategory: item.suggestedSubCategory
+        });
+        if (item.suggestedSubCategory) {
+          const hints = subCategoryHintsByCategory.get(categoryId) ?? new Set<string>();
+          hints.add(item.suggestedSubCategory);
+          subCategoryHintsByCategory.set(categoryId, hints);
+        }
+        createdCategories.push({
+          id: categoryId,
+          name,
+          color: pickCategoryColor(name),
+          createdAt: Date.now()
+        });
+      });
+
+      const createdRules = createdCategories
+        .map((category) => {
+          const hints = Array.from(subCategoryHintsByCategory.get(category.id) ?? []);
+          const rule = buildAutoNaturalRule(category.id, category.name, hints);
+          return rule.value ? rule : null;
+        })
+        .filter(Boolean) as Rule[];
+
+      return {
+        ...current,
+        categories: [...current.categories, ...createdCategories],
+        rules: [...current.rules, ...createdRules],
+        bookmarks: current.bookmarks.map((bookmark) => {
+          const target = resolvedTargets.get(bookmark.id);
+          if (!target) {
+            return bookmark;
+          }
+          return {
+            ...bookmark,
+            categoryId: target.categoryId,
+            subCategory: target.subCategory || bookmark.subCategory
+          };
+        })
+      };
+    });
+
+    setSmartSuggestions((current) => current.filter((item) => !item.selected));
+    setTransientStatus(
+      t("已应用 {count} 条建议", "Applied {count} suggestions.", {
+        count: selected.length
+      })
+    );
+    return true;
+  }, [collectSelectedSuggestions, t, setTransientStatus, update]);
+
+  const openApplyPreview = useCallback(() => {
+    const selected = collectSelectedSuggestions();
+    if (!selected) {
+      return;
+    }
+    setApplyPreviewOpen(true);
+  }, [collectSelectedSuggestions]);
+
   const openImportDialog = useCallback(() => {
     importInputRef.current?.click();
   }, []);
@@ -1010,6 +2274,8 @@ export default function App() {
       ...current,
       bookmarks: []
     }));
+    setSmartSuggestions([]);
+    setDeadLinkIssues([]);
     setTransientStatus(t("已清空收藏", "All bookmarks cleared."));
   }, [state, update, setTransientStatus, t]);
 
@@ -1091,6 +2357,44 @@ export default function App() {
     [setTransientStatus, t]
   );
 
+  const openExternalUrl = useCallback((url: string) => {
+    const normalized = url.trim();
+    if (!normalized) {
+      return;
+    }
+    try {
+      if (chrome.tabs?.create) {
+        chrome.tabs.create({ url: normalized });
+        return;
+      }
+    } catch {
+      // Fall through to background message fallback.
+    }
+    try {
+      chrome.runtime.sendMessage(
+        {
+          type: "OPEN_EXTERNAL_TAB",
+          payload: { url: normalized }
+        },
+        (response?: { ok: boolean; error?: string }) => {
+          if (chrome.runtime.lastError) {
+            setTransientStatus(
+              chrome.runtime.lastError.message ||
+                t("打开链接失败。", "Failed to open link."),
+              "error"
+            );
+            return;
+          }
+          if (response && !response.ok) {
+            setTransientStatus(response.error || t("打开链接失败。", "Failed to open link."), "error");
+          }
+        }
+      );
+    } catch {
+      setTransientStatus(t("打开链接失败。", "Failed to open link."), "error");
+    }
+  }, [setTransientStatus, t]);
+
   const ruleTypeLabels = useMemo(
     () => ({
       domain: t("域名规则", "Domain rule"),
@@ -1117,6 +2421,182 @@ export default function App() {
     }),
     [t]
   );
+
+  const selectedSuggestions = useMemo(
+    () => smartSuggestions.filter((item) => item.selected),
+    [smartSuggestions]
+  );
+  const filteredSuggestions = useMemo(
+    () => {
+      return smartSuggestions.filter((item) => {
+        if (showHighConfidenceOnly && item.confidence !== "high") {
+          return false;
+        }
+        if (showMissingSubCategoryOnly && (item.suggestedSubCategory || "").trim()) {
+          return false;
+        }
+        return true;
+      });
+    },
+    [showHighConfidenceOnly, showMissingSubCategoryOnly, smartSuggestions]
+  );
+  const smartSelectedCount = selectedSuggestions.length;
+  const highConfidenceCount = useMemo(
+    () => smartSuggestions.filter((item) => item.confidence === "high").length,
+    [smartSuggestions]
+  );
+  const missingSubCategoryCount = useMemo(
+    () => smartSuggestions.filter((item) => !(item.suggestedSubCategory || "").trim()).length,
+    [smartSuggestions]
+  );
+  const selectedMissingSubCategoryCount = useMemo(
+    () => selectedSuggestions.filter((item) => !(item.suggestedSubCategory || "").trim()).length,
+    [selectedSuggestions]
+  );
+  const visibleSelectedCount = useMemo(
+    () => filteredSuggestions.filter((item) => item.selected).length,
+    [filteredSuggestions]
+  );
+  const bookmarkMapById = useMemo(() => {
+    if (!state) {
+      return new Map<string, Bookmark>();
+    }
+    return new Map(state.bookmarks.map((bookmark) => [bookmark.id, bookmark]));
+  }, [state]);
+  const suggestionTree = useMemo(() => {
+    const categoryNameById = new Map(sortedCategories.map((category) => [category.id, category.name]));
+    const grouped = new Map<string, { label: string; leaves: Map<string, SmartSuggestion[]> }>();
+
+    filteredSuggestions.forEach((item) => {
+      const categoryLabel = item.targetCategoryId
+        ? categoryNameById.get(item.targetCategoryId) || t("未知分组", "Unknown category")
+        : (item.suggestedCategoryName || "").trim() ||
+          t("待确认新分组", "Pending new category");
+      const categoryKey = item.targetCategoryId
+        ? `existing:${item.targetCategoryId}`
+        : `new:${categoryLabel.toLowerCase()}`;
+      const subLabel =
+        (item.suggestedSubCategory || "").trim() || t("未指定子分类", "No subcategory");
+
+      const categoryGroup = grouped.get(categoryKey) ?? {
+        label: categoryLabel,
+        leaves: new Map<string, SmartSuggestion[]>()
+      };
+      const leafItems = categoryGroup.leaves.get(subLabel) ?? [];
+      leafItems.push(item);
+      categoryGroup.leaves.set(subLabel, leafItems);
+      grouped.set(categoryKey, categoryGroup);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([categoryKey, group]) => {
+        const isExistingCategory = categoryKey.startsWith("existing:");
+        const defaultTargetCategoryId = isExistingCategory
+          ? categoryKey.replace(/^existing:/, "")
+          : undefined;
+        const leaves: SuggestionTreeLeaf[] = Array.from(group.leaves.entries())
+          .map(([subCategory, items]) => ({
+            subCategory,
+            items: [...items].sort((a, b) => {
+              const rank: Record<SuggestionConfidence, number> = { high: 0, medium: 1, low: 2 };
+              return rank[a.confidence] - rank[b.confidence];
+            })
+          }))
+          .sort((a, b) => b.items.length - a.items.length);
+        const total = leaves.reduce((sum, leaf) => sum + leaf.items.length, 0);
+        return {
+          categoryLabel: group.label,
+          categoryKey,
+          defaultTargetCategoryId,
+          isExistingCategory,
+          leaves,
+          total
+        };
+      })
+      .sort((a, b) => b.total - a.total) as SuggestionTreeGroup[];
+  }, [filteredSuggestions, sortedCategories, t]);
+
+  const applyPreviewItems = useMemo(() => {
+    return selectedSuggestions
+      .map((item) => {
+        const bookmark = bookmarkMapById.get(item.bookmarkId);
+        if (!bookmark) {
+          return null;
+        }
+        const fromCategoryName =
+          categoryMap.get(bookmark.categoryId)?.name ?? t("未分类", "Inbox");
+        const toCategoryName = item.targetCategoryId
+          ? categoryMap.get(item.targetCategoryId)?.name ?? t("未知分组", "Unknown category")
+          : (item.suggestedCategoryName || "").trim() || t("待确认新分组", "Pending new category");
+        return {
+          bookmarkId: item.bookmarkId,
+          title: bookmark.title || bookmark.url,
+          url: bookmark.url,
+          fromCategoryName,
+          toCategoryName,
+          subCategory: item.suggestedSubCategory
+        };
+      })
+      .filter(Boolean) as SuggestionPreviewItem[];
+  }, [selectedSuggestions, bookmarkMapById, categoryMap, t]);
+
+  useEffect(() => {
+    setItemTargetDrafts((current) => {
+      const next: Record<string, string> = {};
+      smartSuggestions.forEach((item) => {
+        const existing = current[item.bookmarkId];
+        next[item.bookmarkId] = existing ?? item.targetCategoryId ?? "__new__";
+      });
+      return next;
+    });
+    setItemNewNameDrafts((current) => {
+      const next: Record<string, string> = {};
+      smartSuggestions.forEach((item) => {
+        const existing = current[item.bookmarkId];
+        next[item.bookmarkId] = existing ?? item.suggestedCategoryName ?? "";
+      });
+      return next;
+    });
+  }, [smartSuggestions]);
+
+  useEffect(() => {
+    const groupKeySet = new Set(suggestionTree.map((group) => group.categoryKey));
+    setGroupTargetDrafts((current) => {
+      const next: Record<string, string> = {};
+      suggestionTree.forEach((group) => {
+        const fallback = group.defaultTargetCategoryId || "__new__";
+        next[group.categoryKey] = current[group.categoryKey] ?? fallback;
+      });
+      return next;
+    });
+    setGroupNewNameDrafts((current) => {
+      const next: Record<string, string> = {};
+      suggestionTree.forEach((group) => {
+        const fallback = group.isExistingCategory ? "" : group.categoryLabel;
+        next[group.categoryKey] = current[group.categoryKey] ?? fallback;
+      });
+      return next;
+    });
+    setCollapsedGroups((current) => {
+      const next: Record<string, boolean> = {};
+      Object.keys(current).forEach((key) => {
+        if (groupKeySet.has(key)) {
+          next[key] = current[key];
+        }
+      });
+      return next;
+    });
+    setCollapsedLeaves((current) => {
+      const next: Record<string, boolean> = {};
+      Object.keys(current).forEach((key) => {
+        const groupKey = key.split("::")[0];
+        if (groupKeySet.has(groupKey)) {
+          next[key] = current[key];
+        }
+      });
+      return next;
+    });
+  }, [suggestionTree]);
 
   return (
     <div className="page-scroll px-6 py-8">

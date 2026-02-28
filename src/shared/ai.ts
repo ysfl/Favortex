@@ -7,6 +7,8 @@ const MAX_CHARS = 6000;
 const MAX_SUMMARY_CHARS = 4000;
 const SHORT_SUMMARY_LIMIT = 180;
 const LONG_SUMMARY_LIMIT = 600;
+const MAX_CATEGORY_NAME_CHARS = 36;
+const MAX_SUBCATEGORY_CHARS = 56;
 
 function buildCategoryList(categories: Category[], rules: Rule[]) {
   const naturalByCategory = new Map<string, string[]>();
@@ -147,6 +149,35 @@ function buildCombinedPrompt(
 function normalizeSummary(text: string, maxLength: number) {
   const cleaned = sanitizeText(text).replace(/^["“]+|["”]+$/g, "");
   return truncateText(cleaned, maxLength);
+}
+
+function normalizeCategoryName(text: string) {
+  const cleaned = sanitizeText(text)
+    .replace(/^[#\-\d\.\s]+/, "")
+    .replace(/[<>:"/\\|?*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) {
+    return "";
+  }
+  return truncateText(cleaned, MAX_CATEGORY_NAME_CHARS);
+}
+
+function normalizeSubCategoryName(text: string) {
+  const segments = sanitizeText(text)
+    .split("/")
+    .map((segment) =>
+      segment
+        .replace(/[<>:"\\|?*]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter(Boolean)
+    .slice(0, 3);
+  if (!segments.length) {
+    return "";
+  }
+  return truncateText(segments.join(" / "), MAX_SUBCATEGORY_CHARS);
 }
 
 function extractChatOutputText(payload: unknown) {
@@ -385,6 +416,148 @@ export async function classifyWithAi(
   const categoryId = pickCategoryId(responseText, categories) ?? DEFAULT_CATEGORY_ID;
 
   return { categoryId, raw: responseText };
+}
+
+export type CategorySuggestionResult = {
+  categoryId: string;
+  suggestedCategoryName: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  raw: string;
+};
+
+export type SubCategorySuggestionResult = {
+  subCategory: string;
+  confidence: "high" | "medium" | "low";
+  reason: string;
+  raw: string;
+};
+
+export async function classifyWithAiSuggestion(
+  config: AiConfig,
+  categories: Category[],
+  rules: Rule[],
+  title: string,
+  url: string,
+  text: string
+): Promise<CategorySuggestionResult> {
+  if (!config.apiKey || !config.baseUrl || !config.model) {
+    throw new Error("AI settings are incomplete");
+  }
+
+  const trimmed = sanitizeText(text).slice(0, MAX_CHARS);
+  const list = buildCategoryList(categories, rules);
+  const system =
+    "You classify bookmarks. " +
+    "If an existing category fits, return its id. " +
+    "If no category fits well, return categoryId as \"inbox\" and suggest a short new category name. " +
+    "Respond ONLY JSON: " +
+    "{\"categoryId\":\"...\",\"suggestedCategoryName\":\"...\",\"confidence\":\"high|medium|low\",\"reason\":\"...\"}.";
+  const user =
+    `Existing categories:\n${list}\n\n` +
+    `Page title: ${title}\nPage url: ${url}\n` +
+    `Page content:\n${trimmed}`;
+
+  const responseText = await answerWithAi(config, system, user);
+  const parsed = extractJson(responseText) as {
+    categoryId?: unknown;
+    suggestedCategoryName?: unknown;
+    confidence?: unknown;
+    reason?: unknown;
+  } | null;
+
+  let categoryId =
+    parsed && typeof parsed.categoryId === "string"
+      ? parsed.categoryId
+      : pickCategoryId(responseText, categories) ?? DEFAULT_CATEGORY_ID;
+  const confidence =
+    parsed?.confidence === "high" || parsed?.confidence === "medium" || parsed?.confidence === "low"
+      ? parsed.confidence
+      : "medium";
+  const reason =
+    parsed && typeof parsed.reason === "string" ? truncateText(sanitizeText(parsed.reason), 120) : "";
+  let suggestedCategoryName =
+    parsed && typeof parsed.suggestedCategoryName === "string"
+      ? normalizeCategoryName(parsed.suggestedCategoryName)
+      : "";
+
+  const existingByName = categories.find(
+    (category) => category.name.trim().toLowerCase() === suggestedCategoryName.toLowerCase()
+  );
+  if (existingByName) {
+    categoryId = existingByName.id;
+    suggestedCategoryName = "";
+  }
+  if (categoryId !== DEFAULT_CATEGORY_ID) {
+    suggestedCategoryName = "";
+  }
+
+  return {
+    categoryId,
+    suggestedCategoryName,
+    confidence,
+    reason,
+    raw: responseText
+  };
+}
+
+export async function suggestSubCategoryWithAi(
+  config: AiConfig,
+  title: string,
+  url: string,
+  text: string,
+  targetCategoryName: string,
+  existingSubCategories: string[] = []
+): Promise<SubCategorySuggestionResult> {
+  if (!config.apiKey || !config.baseUrl || !config.model) {
+    throw new Error("AI settings are incomplete");
+  }
+
+  const trimmed = sanitizeText(text).slice(0, MAX_CHARS);
+  const subCategoryHints = existingSubCategories
+    .map((name) => normalizeSubCategoryName(name))
+    .filter(Boolean)
+    .slice(0, 20);
+  const system =
+    "You suggest a bookmark subcategory path under a target category. " +
+    "Return ONLY JSON: " +
+    "{\"subCategory\":\"...\",\"confidence\":\"high|medium|low\",\"reason\":\"...\"}. " +
+    "If no stable subcategory can be inferred, return empty subCategory.";
+  const user =
+    `Target category: ${targetCategoryName}\n` +
+    `Existing subcategories (optional): ${subCategoryHints.join("; ") || "(none)"}\n\n` +
+    `Page title: ${title}\nPage url: ${url}\n` +
+    `Page content:\n${trimmed}`;
+
+  const responseText = await answerWithAi(config, system, user);
+  const parsed = extractJson(responseText) as {
+    subCategory?: unknown;
+    confidence?: unknown;
+    reason?: unknown;
+  } | null;
+  let subCategory =
+    parsed && typeof parsed.subCategory === "string" ? normalizeSubCategoryName(parsed.subCategory) : "";
+  if (subCategory) {
+    const matchedExisting = subCategoryHints.find(
+      (name) => name.toLowerCase() === subCategory.toLowerCase()
+    );
+    if (matchedExisting) {
+      subCategory = matchedExisting;
+    }
+  }
+  const confidence =
+    parsed?.confidence === "high" || parsed?.confidence === "medium" || parsed?.confidence === "low"
+      ? parsed.confidence
+      : "medium";
+  const reason =
+    parsed && typeof parsed.reason === "string" ? truncateText(sanitizeText(parsed.reason), 120) : "";
+
+  return {
+    subCategory,
+    confidence,
+    reason,
+    raw: responseText
+  };
 }
 
 export async function classifyAndSummarizeWithAi(
