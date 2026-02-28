@@ -1,5 +1,6 @@
 import {
   classifyAndSummarizeWithAi,
+  classifyWithAiSuggestion,
   classifyWithAi,
   embedTexts,
   summarizeWithAi
@@ -21,6 +22,7 @@ import type { BackgroundMessage, PageMetaResponse, PageTextResponse } from "./sh
 import { fetchExaContent } from "./shared/exa";
 import { createId } from "./shared/ids";
 import { translate } from "./shared/i18n";
+import { COLOR_PALETTE } from "./shared/colors";
 
 const COMMAND_CLASSIFY = "classify-page";
 const MAX_LOG_CHARS = 240;
@@ -232,6 +234,87 @@ function getPreferredLanguage() {
   }
 }
 
+function pickCategoryColor(name: string) {
+  const palette = COLOR_PALETTE.map((item) => item.className);
+  const seed = Array.from(name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return palette[seed % palette.length] ?? "bg-teal-600";
+}
+
+function buildAutoNaturalRuleValue(categoryName: string) {
+  return translate(
+    `与“${categoryName}”相关的网页内容优先归入该分类。`,
+    `Pages related to "${categoryName}" should be categorized here first.`
+  );
+}
+
+async function createCategoryAndMoveBookmark(url: string, categoryName: string) {
+  const normalizedUrl = url.trim();
+  const normalizedName = categoryName.trim();
+  if (!normalizedUrl || !normalizedName) {
+    return {
+      ok: false,
+      error: translate("分组名称或链接无效。", "Invalid category name or URL.")
+    };
+  }
+
+  let moved = false;
+  await updateState((current) => {
+    const existingByName = current.categories.find(
+      (category) => category.name.trim().toLowerCase() === normalizedName.toLowerCase()
+    );
+    const nextCategoryId = existingByName?.id ?? createId();
+    const nextCategories = existingByName
+      ? current.categories
+      : [
+          ...current.categories,
+          {
+            id: nextCategoryId,
+            name: normalizedName,
+            color: pickCategoryColor(normalizedName),
+            createdAt: Date.now()
+          }
+        ];
+    const nextRules = existingByName
+      ? current.rules
+      : [
+          ...current.rules,
+          {
+            id: createId(),
+            type: "natural" as const,
+            value: buildAutoNaturalRuleValue(normalizedName),
+            categoryId: nextCategoryId,
+            createdAt: Date.now()
+          }
+        ];
+
+    const nextBookmarks = current.bookmarks.map((bookmark) => {
+      if (bookmark.url !== normalizedUrl) {
+        return bookmark;
+      }
+      moved = true;
+      return {
+        ...bookmark,
+        categoryId: nextCategoryId
+      };
+    });
+    return {
+      ...current,
+      categories: nextCategories,
+      rules: nextRules,
+      bookmarks: nextBookmarks
+    };
+  });
+
+  if (!moved) {
+    return {
+      ok: false,
+      error: translate("未找到需要移动的收藏。", "Bookmark to move was not found.")
+    };
+  }
+
+  return { ok: true };
+}
+
 async function resolvePageText(
   tab: chrome.tabs.Tab,
   state: Awaited<ReturnType<typeof loadState>>
@@ -387,7 +470,18 @@ async function backfillFavicons() {
   }));
 }
 
-async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
+type ClassifyActiveTabResult = {
+  ok: boolean;
+  error?: string;
+  suggestion?: {
+    url: string;
+    categoryName: string;
+    reason?: string;
+    confidence?: "high" | "medium" | "low";
+  };
+};
+
+async function classifyActiveTab(): Promise<ClassifyActiveTabResult> {
   let tabId: number | null = null;
   let tabUrl: string | undefined;
   try {
@@ -441,6 +535,9 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
     let categoryId = matchedRule?.categoryId ?? DEFAULT_CATEGORY_ID;
     let summaryShort = "";
     let summaryLong = "";
+    let suggestedCategoryName = "";
+    let suggestionReason = "";
+    let suggestionConfidence: "high" | "medium" | "low" = "medium";
     const canUseAi = state.ai.apiKey && state.ai.baseUrl && state.ai.model;
     const shouldSummarize = (payload.source === "exa" || payload.exaFallback) && canUseAi;
     let classified = Boolean(matchedRule);
@@ -505,6 +602,46 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
       categoryId = result.categoryId;
     }
 
+    if (!matchedRule && canUseAi && categoryId === DEFAULT_CATEGORY_ID) {
+      try {
+        const suggestion = await classifyWithAiSuggestion(
+          state.ai,
+          state.categories,
+          state.rules,
+          title,
+          payload.url,
+          textForAi
+        );
+        if (
+          suggestion.categoryId !== DEFAULT_CATEGORY_ID &&
+          state.categories.some((category) => category.id === suggestion.categoryId)
+        ) {
+          categoryId = suggestion.categoryId;
+        } else if (suggestion.suggestedCategoryName) {
+          const existsByName = state.categories.some(
+            (category) =>
+              category.name.trim().toLowerCase() ===
+              suggestion.suggestedCategoryName.trim().toLowerCase()
+          );
+          if (!existsByName) {
+            suggestedCategoryName = suggestion.suggestedCategoryName;
+            suggestionReason = suggestion.reason;
+            suggestionConfidence = suggestion.confidence;
+          }
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : translate("分组建议失败", "Category suggestion failed.");
+        await appendLog(
+          "error",
+          translate("分组建议失败：{message}", "Category suggestion failed: {message}", { message }),
+          payload.url
+        );
+      }
+    }
+
     const resolvedCategoryId = state.categories.some((category) => category.id === categoryId)
       ? categoryId
       : DEFAULT_CATEGORY_ID;
@@ -554,6 +691,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
           embeddingFingerprint: embedding ? embeddingFingerprint : existing.embeddingFingerprint,
           favicon: existing.favicon || resolvedFavicon,
           categoryId: resolvedCategoryId,
+          source: existing.source ?? "manual",
           createdAt: Date.now()
         };
         return {
@@ -572,6 +710,7 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
         embeddingFingerprint: embedding ? embeddingFingerprint : undefined,
         favicon: resolvedFavicon || undefined,
         categoryId: resolvedCategoryId,
+        source: "manual",
         pinned: false,
         createdAt: Date.now()
       };
@@ -583,7 +722,17 @@ async function classifyActiveTab(): Promise<{ ok: boolean; error?: string }> {
     });
 
     await setBadge(tabId, "OK", "#0f766e");
-    return { ok: true };
+    return {
+      ok: true,
+      suggestion: suggestedCategoryName
+        ? {
+            url: payload.url,
+            categoryName: suggestedCategoryName,
+            reason: suggestionReason || undefined,
+            confidence: suggestionConfidence
+          }
+        : undefined
+    };
   } catch (error) {
     if (tabId) {
       await setBadge(tabId, "ERR", "#b42318");
@@ -620,6 +769,53 @@ chrome.runtime.onMessage.addListener((message: BackgroundMessage, _sender, sendR
         sendResponse({ ok: false, error: message });
       });
     return true;
+  }
+  if (message?.type === "CREATE_CATEGORY_AND_MOVE") {
+    createCategoryAndMoveBookmark(message.payload.url, message.payload.categoryName)
+      .then((result) => sendResponse(result))
+      .catch((error) => {
+        const responseMessage =
+          error instanceof Error
+            ? error.message
+            : translate("未知错误", "Unknown error.");
+        sendResponse({ ok: false, error: responseMessage });
+      });
+    return true;
+  }
+  if (message?.type === "OPEN_EXTERNAL_TAB") {
+    const rawUrl = message.payload?.url?.trim();
+    if (!rawUrl) {
+      sendResponse({
+        ok: false,
+        error: translate("链接为空，无法打开。", "URL is empty.")
+      });
+      return false;
+    }
+    try {
+      const parsed = new URL(rawUrl);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        sendResponse({
+          ok: false,
+          error: translate("仅支持打开 http/https 链接。", "Only http/https links are supported.")
+        });
+        return false;
+      }
+      chrome.tabs.create({ url: parsed.toString() }, () => {
+        const error = chrome.runtime.lastError;
+        if (error) {
+          sendResponse({ ok: false, error: error.message });
+          return;
+        }
+        sendResponse({ ok: true });
+      });
+      return true;
+    } catch {
+      sendResponse({
+        ok: false,
+        error: translate("链接格式无效，无法打开。", "Invalid URL.")
+      });
+      return false;
+    }
   }
   return false;
 });

@@ -14,7 +14,7 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting"],
+  "permissions": ["storage", "unlimitedStorage", "tabs", "scripting", "bookmarks"],
   "host_permissions": ["<all_urls>"],
   "commands": {
     "classify-page": {

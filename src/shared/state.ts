@@ -212,15 +212,35 @@ export function normalizeState(value?: Partial<AppState>): AppState {
       typeof rawFingerprint === "string" && rawFingerprint.trim()
         ? rawFingerprint
         : undefined;
+    const rawSource = (bookmark as { source?: unknown }).source;
+    const source =
+      rawSource === "browser-import"
+        ? "browser-import"
+        : rawSource === "manual"
+          ? "manual"
+          : undefined;
+    const rawFolderPath = (bookmark as { folderPath?: unknown }).folderPath;
+    const folderPath =
+      typeof rawFolderPath === "string" && rawFolderPath.trim()
+        ? rawFolderPath.trim()
+        : undefined;
+    const rawSubCategory = (bookmark as { subCategory?: unknown }).subCategory;
+    const subCategory =
+      typeof rawSubCategory === "string" && rawSubCategory.trim()
+        ? rawSubCategory.trim()
+        : undefined;
     return {
       ...bookmark,
       excerpt,
       summaryLong,
       embedding,
       embeddingFingerprint,
+      source,
+      folderPath,
+      subCategory,
       pinned: bookmark.pinned ?? false,
       categoryId: categoryIds.has(bookmark.categoryId) ? bookmark.categoryId : DEFAULT_CATEGORY_ID
-    };
+    } as AppState["bookmarks"][number];
   });
 
   return {

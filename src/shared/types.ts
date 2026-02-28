@@ -57,6 +57,9 @@ export type Bookmark = {
   embeddingFingerprint?: string;
   favicon?: string;
   categoryId: string;
+  source?: "manual" | "browser-import";
+  folderPath?: string;
+  subCategory?: string;
   pinned: boolean;
   createdAt: number;
 };

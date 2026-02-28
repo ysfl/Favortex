@@ -18,4 +18,15 @@ export type ContentMessage = {
 
 export type BackgroundMessage = {
   type: "CLASSIFY_CURRENT_TAB";
+} | {
+  type: "CREATE_CATEGORY_AND_MOVE";
+  payload: {
+    url: string;
+    categoryName: string;
+  };
+} | {
+  type: "OPEN_EXTERNAL_TAB";
+  payload: {
+    url: string;
+  };
 };
