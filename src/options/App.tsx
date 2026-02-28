@@ -2599,7 +2599,7 @@ export default function App() {
   }, [suggestionTree]);
 
   return (
-    <div className="page-scroll px-6 py-8">
+    <div className="page-scroll options-page px-6 py-8">
       <div className="mx-auto flex max-w-5xl flex-col gap-6">
         <header className="glass-card rounded-[32px] px-6 py-6">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -2929,6 +2929,655 @@ export default function App() {
                 </div>
 
                 <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">
+                        {t("智能整理建议", "Smart organize suggestions")}
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {t(
+                          "自动分析规则、导入目录、域名和 AI 建议，支持全选/部分应用。",
+                          "Analyze rules, imported folders, domains, and AI hints with selective apply."
+                        )}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={importBrowserBookmarks}
+                        className="outline-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold"
+                      >
+                        <UploadIcon /> {t("导入浏览器收藏", "Import browser bookmarks")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runSmartSuggestions()}
+                        disabled={smartBusy}
+                        className="gradient-button inline-flex items-center gap-2 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-70"
+                      >
+                        {smartBusy
+                          ? t("正在分析...", "Analyzing...")
+                          : t("生成整理建议", "Generate suggestions")}
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-slate-500">
+                    {t(
+                      "浏览器收藏导入同样遵循“合并现有 / 覆盖现有”模式设置。",
+                      "Browser bookmark import also follows Merge/Replace mode."
+                    )}
+                  </div>
+
+                  <div className="mt-3 grid gap-2 md:grid-cols-4">
+                    <div className="rounded-xl border border-teal-200 bg-teal-50 px-3 py-2">
+                      <div className="text-[11px] font-semibold text-teal-700">
+                        {t("可见建议", "Visible")}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-teal-900">
+                        {filteredSuggestions.length}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <div className="text-[11px] font-semibold text-emerald-700">
+                        {t("已选建议", "Selected")}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-emerald-900">
+                        {smartSelectedCount}
+                      </div>
+                      <div className="text-[11px] text-emerald-700">
+                        {t("当前视图 {count}", "In current view {count}", {
+                          count: visibleSelectedCount
+                        })}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-3 py-2">
+                      <div className="text-[11px] font-semibold text-indigo-700">
+                        {t("高置信", "High confidence")}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-indigo-900">
+                        {highConfidenceCount}
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+                      <div className="text-[11px] font-semibold text-amber-700">
+                        {t("待补子分类", "Missing subcategory")}
+                      </div>
+                      <div className="mt-1 text-lg font-semibold text-amber-900">
+                        {missingSubCategoryCount}
+                      </div>
+                      <div className="text-[11px] text-amber-700">
+                        {t("已选 {count}", "Selected {count}", {
+                          count: selectedMissingSubCategoryCount
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-slate-700"
+                        checked={showHighConfidenceOnly}
+                        onChange={(event) => setShowHighConfidenceOnly(event.target.checked)}
+                      />
+                      <span>
+                        {t("仅看高置信建议", "Show high-confidence suggestions only")}
+                      </span>
+                    </label>
+                    <label className="inline-flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-slate-700"
+                        checked={showMissingSubCategoryOnly}
+                        onChange={(event) => setShowMissingSubCategoryOnly(event.target.checked)}
+                      />
+                      <span>
+                        {t("仅看待补子分类", "Show missing-subcategory suggestions only")}
+                      </span>
+                    </label>
+                    {smartBusy ? (
+                      <span>
+                        {t("进度 {done}/{total}", "Progress {done}/{total}", {
+                          done: smartProgress.done,
+                          total: smartProgress.total
+                        })}
+                      </span>
+                    ) : null}
+                    <span className="text-slate-400">
+                      {t(
+                        "提示：仅过滤显示，不会丢失中低置信已选项。",
+                        "Tip: this only filters view; selected hidden items remain selected."
+                      )}
+                    </span>
+                  </div>
+                  <div className="mt-2 rounded-xl border border-white/60 bg-white/70 px-3 py-2 text-xs text-slate-500">
+                    <p className="font-semibold text-slate-600">
+                      {t("使用建议（3 步）", "How to use (3 steps)")}
+                    </p>
+                    <p>
+                      {t(
+                        "1) 先看“建议分类”分组；2) 按组批量改目标分类（可新建）；3) 勾选并应用。",
+                        "1) Review grouped suggestions, 2) set group target, 3) select and apply."
+                      )}
+                    </p>
+                  </div>
+                  <div className="mt-2 rounded-xl border border-white/60 bg-white/70 px-3 py-2 text-xs text-slate-500">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-semibold text-slate-600">
+                        {t("导入验活", "Import health check")}
+                      </p>
+                      {deadLinkCheckBusy ? (
+                        <span>
+                          {t("检测中 {done}/{total}", "Checking {done}/{total}", {
+                            done: deadLinkCheckProgress.done,
+                            total: deadLinkCheckProgress.total
+                          })}
+                        </span>
+                      ) : (
+                        <span>
+                          {t("问题链接 {count}", "Problematic links {count}", {
+                            count: deadLinkIssues.length
+                          })} ·{" "}
+                          {t("可直接删除 {count}", "Safe to remove {count}", {
+                            count: deadLinkIssues.filter((item) => item.category === "dead").length
+                          })}
+                        </span>
+                      )}
+                    </div>
+                    {deadLinkIssues.length > 0 ? (
+                      <div className="mt-2 space-y-2">
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => selectAllDeadLinkIssues(true)}
+                            className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                          >
+                            {t("全选失效项", "Select all dead links")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => selectAllDeadLinkIssues(false)}
+                            className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                          >
+                            {t("清空选择", "Clear selection")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void removeSelectedDeadLinks()}
+                            className="rounded-full border border-red-200 bg-red-50 px-3 py-1 text-[11px] font-semibold text-red-700"
+                          >
+                            {t("删除已选失效链接", "Remove selected dead links")}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={clearDeadLinkIssues}
+                            className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                          >
+                            {t("忽略本次结果", "Dismiss this list")}
+                          </button>
+                        </div>
+                        <div className="max-h-36 space-y-1 overflow-auto pr-1">
+                          {deadLinkIssues.map((item) => (
+                            <div
+                              key={item.bookmarkId}
+                              className="flex items-start gap-2 rounded-lg border border-white/70 bg-white px-2 py-2"
+                            >
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 h-4 w-4 accent-slate-700"
+                                checked={item.selected}
+                                onChange={(event) =>
+                                  toggleDeadLinkSelected(item.bookmarkId, event.target.checked)
+                                }
+                              />
+                              <div className="min-w-0">
+                                <div className="line-clamp-1 text-xs font-semibold text-slate-700">
+                                  {item.title}
+                                </div>
+                                <div className="line-clamp-1 text-[11px] text-slate-500">
+                                  {item.url}
+                                </div>
+                                <div className="mt-1 flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={clsx(
+                                      "rounded-full border px-2 py-0.5 text-[11px]",
+                                      item.category === "dead"
+                                        ? "border-red-200 bg-red-50 text-red-700"
+                                        : item.category === "restricted"
+                                          ? "border-amber-200 bg-amber-50 text-amber-700"
+                                          : item.category === "temporary"
+                                            ? "border-sky-200 bg-sky-50 text-sky-700"
+                                            : "border-slate-200 bg-slate-50 text-slate-700"
+                                    )}
+                                  >
+                                    {item.category === "dead"
+                                      ? t("确定失效", "Dead link")
+                                      : item.category === "restricted"
+                                        ? t("受限访问", "Restricted")
+                                        : item.category === "temporary"
+                                          ? t("临时异常", "Temporary issue")
+                                          : t("待确认", "Needs review")}
+                                  </span>
+                                  {typeof item.statusCode === "number" ? (
+                                    <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] text-slate-500">
+                                      HTTP {item.statusCode}
+                                    </span>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      openExternalUrl(item.url);
+                                    }}
+                                    className="outline-button rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                  >
+                                    {t("查看", "Open")}
+                                  </button>
+                                </div>
+                                <div className="text-[11px] text-slate-600">{item.reason}</div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {t(
+                          "导入后会自动验活，发现疑似失效链接可勾选删除。",
+                          "Imported links are auto-checked and can be removed if likely dead."
+                        )}
+                      </p>
+                    )}
+                  </div>
+
+                  {suggestionTree.length > 0 ? (
+                    <div className="mt-3 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAllSuggestionSelection(true)}
+                          className="outline-button rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          {t("全选建议", "Select all")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setAllSuggestionSelection(false)}
+                          className="outline-button rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          {t("清空选择", "Clear selection")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openApplyPreview}
+                          className="outline-button rounded-full px-4 py-1.5 text-xs font-semibold"
+                        >
+                          {t("仅预览变更", "Preview only")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void applySelectedSuggestions();
+                          }}
+                          className="gradient-button rounded-full px-4 py-1.5 text-xs font-semibold ring-2 ring-teal-300/60"
+                        >
+                          {t("直接保存已选", "Save selected now")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={dismissSelectedSuggestions}
+                          className="outline-button rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          {t("忽略已选建议", "Dismiss selected")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAllSuggestionCollapsed(
+                              suggestionTree.map((group) => group.categoryKey),
+                              suggestionTree.flatMap((group) =>
+                                group.leaves.map(
+                                  (leaf) => `${group.categoryKey}::${leaf.subCategory}`
+                                )
+                              ),
+                              true
+                            )
+                          }
+                          className="outline-button rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          {t("折叠全部", "Collapse all")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setAllSuggestionCollapsed(
+                              suggestionTree.map((group) => group.categoryKey),
+                              suggestionTree.flatMap((group) =>
+                                group.leaves.map(
+                                  (leaf) => `${group.categoryKey}::${leaf.subCategory}`
+                                )
+                              ),
+                              false
+                            )
+                          }
+                          className="outline-button rounded-full px-3 py-1.5 text-xs font-semibold"
+                        >
+                          {t("展开全部", "Expand all")}
+                        </button>
+                      </div>
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                        {t(
+                          "“仅预览变更”不会写入数据；可在预览弹窗中保存，也可直接点击“直接保存已选”。",
+                          "Preview-only does not save. You can save in preview dialog or use Save selected now."
+                        )}
+                      </div>
+                      <div className="max-h-80 space-y-2 overflow-auto pr-1">
+                        {suggestionTree.map((group) => {
+                          const groupItems = group.leaves.flatMap((leaf) => leaf.items);
+                          const groupIds = groupItems.map((item) => item.bookmarkId);
+                          const selectedInGroup = groupItems.filter((item) => item.selected).length;
+                          const groupCollapsed = collapsedGroups[group.categoryKey] ?? false;
+                          const groupTargetValue =
+                            groupTargetDrafts[group.categoryKey] ??
+                            group.defaultTargetCategoryId ??
+                            "__new__";
+                          const groupNewName =
+                            groupNewNameDrafts[group.categoryKey] ??
+                            (group.isExistingCategory ? "" : group.categoryLabel);
+                          return (
+                            <div
+                              key={group.categoryKey}
+                              className="rounded-xl border border-white/70 bg-white/85 px-3 py-3"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div>
+                                  <div className="text-sm font-semibold text-slate-800">
+                                    {t("建议分类: {name}", "Suggested category: {name}", {
+                                      name: group.categoryLabel
+                                    })}{" "}
+                                    <span className="text-xs font-normal text-slate-500">
+                                      ({selectedInGroup}/{group.total})
+                                    </span>
+                                  </div>
+                                  <div className="text-[11px] text-slate-500">
+                                    {t("先在本组设置目标分类，再批量应用。", "Set group target first, then apply.")}
+                                  </div>
+                                </div>
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => toggleGroupCollapsed(group.categoryKey)}
+                                    className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                                  >
+                                    {groupCollapsed ? t("展开本组", "Expand group") : t("折叠本组", "Collapse group")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSuggestionSelectionByIds(groupIds, true)}
+                                    className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                                  >
+                                    {t("全选本组", "Select group")}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSuggestionSelectionByIds(groupIds, false)}
+                                    className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                                  >
+                                    {t("清空本组", "Clear group")}
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="mt-2 grid gap-2 md:grid-cols-[minmax(180px,1fr),minmax(180px,1fr),auto]">
+                                <select
+                                  className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
+                                  value={groupTargetValue}
+                                  onChange={(event) =>
+                                    updateGroupTargetDraft(group.categoryKey, event.target.value)
+                                  }
+                                >
+                                  <option value="__new__">{t("本组创建新分组", "Create new category for group")}</option>
+                                  {sortedCategories.map((category) => (
+                                    <option key={category.id} value={category.id}>
+                                      {category.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                {groupTargetValue === "__new__" ? (
+                                  <input
+                                    className="input-field w-full"
+                                    value={groupNewName}
+                                    onChange={(event) =>
+                                      updateGroupNewNameDraft(group.categoryKey, event.target.value)
+                                    }
+                                    placeholder={t("本组新分组名称", "New category name for group")}
+                                  />
+                                ) : (
+                                  <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
+                                    {t("本组目标: 现有分组", "Target: existing category")}
+                                  </div>
+                                )}
+                                <button
+                                  type="button"
+                                  className="gradient-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                                  onClick={() => {
+                                    if (groupTargetValue === "__new__") {
+                                      const normalized = groupNewName.trim();
+                                      if (!normalized) {
+                                        setTransientStatus(
+                                          t(
+                                            "请先填写“{name}”的目标分组名称。",
+                                            "Please enter a target category name for \"{name}\".",
+                                            { name: group.categoryLabel }
+                                          ),
+                                          "error"
+                                        );
+                                        return;
+                                      }
+                                      setSuggestionTargetByIds(groupIds, undefined, normalized);
+                                      return;
+                                    }
+                                    setSuggestionTargetByIds(groupIds, groupTargetValue);
+                                  }}
+                                >
+                                  {t("应用到本组", "Apply to group")}
+                                </button>
+                              </div>
+                              {!groupCollapsed ? (
+                                <div className="mt-2 space-y-2">
+                                {group.leaves.map((leaf) => (
+                                  (() => {
+                                    const leafKey = `${group.categoryKey}::${leaf.subCategory}`;
+                                    const leafCollapsed = collapsedLeaves[leafKey] ?? false;
+                                    const leafSelected = leaf.items.filter((item) => item.selected).length;
+                                    const leafNeedsSubCategory = leaf.items.some(
+                                      (item) => !(item.suggestedSubCategory || "").trim()
+                                    );
+                                    return (
+                                      <div
+                                        key={`${group.categoryKey}-${leaf.subCategory}`}
+                                        className={clsx(
+                                          "rounded-lg border bg-white/90 px-2 py-2",
+                                          leafNeedsSubCategory
+                                            ? "border-amber-200 bg-amber-50/60"
+                                            : "border-white/70"
+                                        )}
+                                      >
+                                        <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                                          <div
+                                            className={clsx(
+                                              "text-xs font-semibold",
+                                              leafNeedsSubCategory ? "text-amber-700" : "text-slate-600"
+                                            )}
+                                          >
+                                      {t("子分类: {name}", "Subcategory: {name}", {
+                                        name: leaf.subCategory
+                                      })}{" "}
+                                            <span className="text-slate-400">
+                                              ({leafSelected}/{leaf.items.length})
+                                            </span>
+                                          </div>
+                                          <button
+                                            type="button"
+                                            onClick={() => toggleLeafCollapsed(leafKey)}
+                                            className="outline-button rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                          >
+                                            {leafCollapsed ? t("展开", "Expand") : t("折叠", "Collapse")}
+                                          </button>
+                                        </div>
+                                        {!leafCollapsed ? (
+                                          <div className="space-y-2">
+                                      {leaf.items.map((item) => {
+                                        const bookmark = bookmarkMapById.get(item.bookmarkId);
+                                        if (!bookmark) {
+                                          return null;
+                                        }
+                                        const itemNeedsSubCategory = !(item.suggestedSubCategory || "").trim();
+                                        return (
+                                          <div
+                                            key={item.bookmarkId}
+                                            className={clsx(
+                                              "rounded-md border bg-white px-2 py-2",
+                                              itemNeedsSubCategory ? "border-amber-200" : "border-white/70"
+                                            )}
+                                          >
+                                            <div className="flex items-start gap-2">
+                                              <input
+                                                type="checkbox"
+                                                className="mt-0.5 h-4 w-4 accent-slate-700"
+                                                checked={item.selected}
+                                                onChange={(event) =>
+                                                  toggleSuggestionSelected(
+                                                    item.bookmarkId,
+                                                    event.target.checked
+                                                  )
+                                                }
+                                              />
+                                              <div className="min-w-0 flex-1 space-y-1">
+                                                <button
+                                                  type="button"
+                                                  onClick={() => openExternalUrl(bookmark.url)}
+                                                  className="line-clamp-1 text-left text-sm font-semibold text-slate-800 hover:text-slate-900"
+                                                >
+                                                  {bookmark.title || bookmark.url}
+                                                </button>
+                                                <div className="text-xs text-slate-500">
+                                                  {item.reason}
+                                                </div>
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                  <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] text-slate-500">
+                                                    {item.confidence === "high"
+                                                      ? t("高置信", "High confidence")
+                                                      : item.confidence === "medium"
+                                                        ? t("中置信", "Medium confidence")
+                                                        : t("低置信", "Low confidence")}
+                                                  </span>
+                                                  {bookmark.folderPath ? (
+                                                    <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] text-slate-500">
+                                                      {t("目录: {path}", "Folder: {path}", {
+                                                        path: bookmark.folderPath
+                                                      })}
+                                                    </span>
+                                                  ) : null}
+                                                  {itemNeedsSubCategory ? (
+                                                    <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-700">
+                                                      {t("待补子分类", "Missing subcategory")}
+                                                    </span>
+                                                  ) : null}
+                                                </div>
+                                              </div>
+                                            </div>
+                                            <div className="mt-2 grid gap-2 md:grid-cols-[minmax(160px,1fr),minmax(160px,1fr),auto]">
+                                              {(() => {
+                                                const itemTargetDraft =
+                                                  itemTargetDrafts[item.bookmarkId] ??
+                                                  item.targetCategoryId ??
+                                                  "__new__";
+                                                const itemNameDraft =
+                                                  itemNewNameDrafts[item.bookmarkId] ??
+                                                  item.suggestedCategoryName ??
+                                                  "";
+                                                const hasPendingChanges =
+                                                  (item.targetCategoryId || "__new__") !==
+                                                    itemTargetDraft ||
+                                                  (item.suggestedCategoryName || "") !==
+                                                    itemNameDraft;
+                                                return (
+                                                  <>
+                                              <select
+                                                className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-600"
+                                                value={itemTargetDraft}
+                                                onChange={(event) =>
+                                                  updateItemTargetDraft(item.bookmarkId, event.target.value)
+                                                }
+                                              >
+                                                <option value="__new__">
+                                                  {t("创建新分组", "Create new category")}
+                                                </option>
+                                                {sortedCategories.map((category) => (
+                                                  <option key={category.id} value={category.id}>
+                                                    {category.name}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                              {itemTargetDraft === "__new__" ? (
+                                                <input
+                                                  className="input-field w-full"
+                                                  value={itemNameDraft}
+                                                  onChange={(event) =>
+                                                    updateItemNewNameDraft(item.bookmarkId, event.target.value)
+                                                  }
+                                                  placeholder={t("新分组名称", "New category name")}
+                                                />
+                                              ) : (
+                                                <div className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
+                                                  {t("将移动到现有分组", "Move to existing category")}
+                                                </div>
+                                              )}
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => saveSuggestionItemDraft(item.bookmarkId)}
+                                                      className={clsx(
+                                                        "rounded-full px-3 py-1 text-[11px] font-semibold",
+                                                        hasPendingChanges
+                                                          ? "gradient-button"
+                                                          : "outline-button"
+                                                      )}
+                                                    >
+                                                      {hasPendingChanges
+                                                        ? t("保存此条", "Save item")
+                                                        : t("已保存", "Saved")}
+                                                    </button>
+                                                  </>
+                                                );
+                                              })()}
+                                            </div>
+                                          </div>
+                                        );
+                                      })}
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    );
+                                  })()
+                                ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 rounded-2xl border border-white/60 bg-white/70 px-3 py-3 text-xs text-slate-500">
+                      {t(
+                        "暂无整理建议。可先导入浏览器收藏或点击“生成整理建议”。",
+                        "No suggestions yet. Import browser bookmarks or generate suggestions."
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4">
                   <div className="flex flex-col gap-2 md:flex-row md:items-center">
                     <input
                       type="search"
@@ -2983,18 +3632,24 @@ export default function App() {
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0">
-                              <a
-                                href={bookmark.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="text-sm font-semibold text-slate-800 line-clamp-2 hover:text-slate-900"
+                              <button
+                                type="button"
+                                onClick={() => openExternalUrl(bookmark.url)}
+                                className="text-left text-sm font-semibold text-slate-800 line-clamp-2 hover:text-slate-900"
                               >
                                 {bookmark.title || bookmark.url}
-                              </a>
+                              </button>
                               <div className="mt-1 text-xs text-slate-500">
                                 {getDomain(bookmark.url) || bookmark.url} ·{" "}
                                 {formatDate(dateFormatter, bookmark.createdAt)}
                               </div>
+                              {bookmark.folderPath ? (
+                                <div className="mt-1 text-[11px] text-slate-400">
+                                  {t("导入目录: {path}", "Imported folder: {path}", {
+                                    path: bookmark.folderPath
+                                  })}
+                                </div>
+                              ) : null}
                             </div>
                             <div className="flex items-center gap-2">
                               <button
@@ -3055,6 +3710,13 @@ export default function App() {
                                 ))}
                               </select>
                             </div>
+                            {bookmark.subCategory ? (
+                              <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1 text-xs text-slate-500">
+                                {t("子分类: {name}", "Subcategory: {name}", {
+                                  name: bookmark.subCategory
+                                })}
+                              </span>
+                            ) : null}
                           </div>
                         </div>
                       );
@@ -3643,6 +4305,88 @@ export default function App() {
         </Tabs.Content>
         </Tabs.Root>
       </div>
+
+      <Dialog.Root open={applyPreviewOpen} onOpenChange={setApplyPreviewOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-[70] bg-black/30" />
+          <Dialog.Content className="fixed left-1/2 top-1/2 z-[71] flex max-h-[88vh] w-[92vw] max-w-3xl translate-center flex-col overflow-hidden rounded-3xl bg-white p-6">
+            <Dialog.Title className="text-lg font-semibold text-slate-900">
+              {t("应用前预览", "Preview before apply")}
+            </Dialog.Title>
+            <Dialog.Description className="mt-2 text-sm text-slate-600">
+              {t(
+                "请确认这些收藏将被移动到目标分类。你可以仅预览，或直接在此保存。",
+                "Review category moves below. You can preview only or save directly here."
+              )}
+            </Dialog.Description>
+
+            <div className="mt-4 rounded-2xl border border-white/60 bg-white/70 px-3 py-2 text-xs text-slate-600">
+              {t("本次将应用 {count} 条建议。", "{count} suggestions will be applied.", {
+                count: applyPreviewItems.length
+              })}
+            </div>
+
+            <div className="mt-3 flex-1 space-y-2 overflow-auto pr-1">
+              {applyPreviewItems.length === 0 ? (
+                <div className="rounded-2xl border border-white/60 bg-white/80 px-4 py-4 text-sm text-slate-500">
+                  {t("暂无可预览内容，请先选择建议。", "No items to preview. Select suggestions first.")}
+                </div>
+              ) : (
+                applyPreviewItems.map((item) => (
+                  <div
+                    key={item.bookmarkId}
+                    className="rounded-xl border border-white/70 bg-white/85 px-3 py-3"
+                  >
+                    <div className="line-clamp-1 text-sm font-semibold text-slate-800">
+                      {item.title}
+                    </div>
+                    <div className="mt-1 text-xs text-slate-500">{item.url}</div>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                      <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1">
+                        {t("从: {name}", "From: {name}", { name: item.fromCategoryName })}
+                      </span>
+                      <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1">
+                        {t("到: {name}", "To: {name}", { name: item.toCategoryName })}
+                      </span>
+                      {item.subCategory ? (
+                        <span className="rounded-full border border-white/70 bg-white/80 px-3 py-1">
+                          {t("子分类: {name}", "Subcategory: {name}", { name: item.subCategory })}
+                        </span>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => openExternalUrl(item.url)}
+                        className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                      >
+                        {t("新标签打开", "Open in new tab")}
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="mt-6 flex justify-end gap-3">
+              <Dialog.Close className="outline-button rounded-full px-4 py-2 text-sm font-semibold">
+                {t("关闭预览", "Close preview")}
+              </Dialog.Close>
+              <button
+                type="button"
+                onClick={() => {
+                  void applySelectedSuggestions().then((ok) => {
+                    if (ok) {
+                      setApplyPreviewOpen(false);
+                    }
+                  });
+                }}
+                className="gradient-button rounded-full px-4 py-2 text-sm font-semibold"
+              >
+                {t("确认保存到收藏", "Confirm & save to bookmarks")}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={categoryDialogOpen} onOpenChange={setCategoryDialogOpen}>
         <Dialog.Portal>

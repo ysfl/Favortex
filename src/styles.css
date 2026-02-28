@@ -241,6 +241,20 @@ textarea:focus-visible {
   height: 100%;
 }
 
+.options-page {
+  font-size: 15px;
+}
+
+.options-page .text-xs {
+  font-size: 0.8125rem;
+}
+
+@media (max-width: 768px) {
+  .options-page {
+    font-size: 14px;
+  }
+}
+
 .page-scroll::-webkit-scrollbar,
 .popup-scroll::-webkit-scrollbar {
   width: 8px;
