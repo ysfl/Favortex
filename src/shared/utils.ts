@@ -4,6 +4,13 @@ export function sanitizeText(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+export function stripHtmlTags(text: string): string {
+  if (!text) {
+    return "";
+  }
+  return text.replace(/<[^>]*>/g, " ");
+}
+
 export function makeExcerpt(text: string, maxLength = 240): string {
   const cleaned = sanitizeText(text);
   if (cleaned.length <= maxLength) {

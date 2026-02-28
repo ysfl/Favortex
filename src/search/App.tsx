@@ -5,7 +5,13 @@ import { answerWithAi, embedTexts, rerankTexts } from "../shared/ai";
 import { useAppState } from "../shared/hooks";
 import { renderMarkdown } from "../shared/markdown";
 import type { Bookmark } from "../shared/types";
-import { buildEmbeddingFingerprint, getDomain, sanitizeText, truncateText } from "../shared/utils";
+import {
+  buildEmbeddingFingerprint,
+  getDomain,
+  sanitizeText,
+  stripHtmlTags,
+  truncateText
+} from "../shared/utils";
 import { getLanguageTag, useI18n } from "../shared/i18n";
 
 const AI_SEARCH_TOP_K = 40;
@@ -44,9 +50,10 @@ function cosineSimilarity(a: number[], b: number[]) {
 }
 
 function buildSearchText(bookmark: Bookmark) {
+  const summary = stripHtmlTags(bookmark.summaryLong || bookmark.excerpt || "");
   const raw = [
     bookmark.title,
-    bookmark.summaryLong || bookmark.excerpt,
+    summary,
     bookmark.url
   ]
     .filter(Boolean)
@@ -303,7 +310,7 @@ export default function App() {
   const buildChatContext = useCallback((items: Bookmark[]) => {
     return items.slice(0, CHAT_CONTEXT_MAX).map((bookmark, index) => {
       const summary = truncateText(
-        sanitizeText(bookmark.summaryLong || bookmark.excerpt || ""),
+        sanitizeText(stripHtmlTags(bookmark.summaryLong || bookmark.excerpt || "")),
         CHAT_SUMMARY_MAX_CHARS
       );
       return [

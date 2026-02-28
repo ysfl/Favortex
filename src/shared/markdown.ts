@@ -41,15 +41,28 @@ marked.setOptions({
   breaks: true
 });
 
+function escapeHtml(source: string) {
+  return source
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 export function renderMarkdown(source: string): string {
   if (!source) {
     return "";
   }
   try {
-    const html = marked.parse(source, { async: false }) as string;
+    // Always neutralize raw HTML before markdown parse to prevent remote script/style injection.
+    const safeSource = escapeHtml(source);
+    const html = marked.parse(safeSource, { async: false }) as string;
     return DOMPurify.sanitize(html, {
       USE_PROFILES: { html: true },
       ALLOWED_TAGS,
+      ALLOWED_ATTR: ["href", "target", "rel"],
+      FORBID_TAGS: ["script", "style", "link", "iframe", "object", "embed", "meta", "base"],
       ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto|tel):|#)/i
     });
   } catch {
