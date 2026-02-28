@@ -12,16 +12,126 @@ import clsx from "clsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppState } from "../shared/hooks";
 import { DEFAULT_CATEGORY_ID } from "../shared/state";
+import type { Bookmark } from "../shared/types";
 import { getDomain, truncateText } from "../shared/utils";
 import { createId } from "../shared/ids";
 import { getLanguageTag, useI18n } from "../shared/i18n";
 
 const SHORTCUT_HINT = "Ctrl+Shift+Y";
 type SortMode = "recent";
+const NODE_PAGE_SIZE = 8;
+
+type FolderNode = {
+  label: string;
+  path: string;
+  depth: number;
+  directItems: Bookmark[];
+  children: FolderNode[];
+  total: number;
+};
+
+type CategoryGroup = {
+  id: string;
+  name: string;
+  color: string;
+  items: Bookmark[];
+  rootItems: Bookmark[];
+  tree: FolderNode[];
+};
+
+type MutableFolderNode = {
+  label: string;
+  path: string;
+  depth: number;
+  directItems: Bookmark[];
+  children: Map<string, MutableFolderNode>;
+  total: number;
+};
+
+function splitSubCategoryPath(subCategory?: string) {
+  if (!subCategory) {
+    return [];
+  }
+  return subCategory
+    .split("/")
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+}
+
+function toFolderNodes(
+  map: Map<string, MutableFolderNode>,
+  localeTag: string
+): FolderNode[] {
+  return Array.from(map.values())
+    .map((node) => ({
+      label: node.label,
+      path: node.path,
+      depth: node.depth,
+      directItems: node.directItems,
+      children: toFolderNodes(node.children, localeTag),
+      total: node.total
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, localeTag));
+}
+
+function buildCategoryTree(items: Bookmark[], localeTag: string) {
+  const rootItems: Bookmark[] = [];
+  const rootMap = new Map<string, MutableFolderNode>();
+
+  items.forEach((item) => {
+    const segments = splitSubCategoryPath(item.subCategory);
+    if (segments.length === 0) {
+      rootItems.push(item);
+      return;
+    }
+
+    let levelMap = rootMap;
+    const pathParts: string[] = [];
+
+    segments.forEach((segment, index) => {
+      pathParts.push(segment);
+      const existing = levelMap.get(segment);
+      const current =
+        existing ??
+        ({
+          label: segment,
+          path: pathParts.join(" / "),
+          depth: index + 1,
+          directItems: [],
+          children: new Map<string, MutableFolderNode>(),
+          total: 0
+        } as MutableFolderNode);
+      current.total += 1;
+      if (index === segments.length - 1) {
+        current.directItems.push(item);
+      }
+      if (!existing) {
+        levelMap.set(segment, current);
+      }
+      levelMap = current.children;
+    });
+  });
+
+  return {
+    rootItems,
+    tree: toFolderNodes(rootMap, localeTag)
+  };
+}
 
 function formatDate(dateFormatter: Intl.DateTimeFormat, timestamp: number) {
   return dateFormatter.format(new Date(timestamp));
 }
+
+type ClassifyResponse = {
+  ok: boolean;
+  error?: string;
+  suggestion?: {
+    url: string;
+    categoryName: string;
+    reason?: string;
+    confidence?: "high" | "medium" | "low";
+  };
+};
 
 export default function App() {
   const { state, update } = useAppState();
@@ -72,7 +182,7 @@ export default function App() {
 
   const grouped = useMemo(() => {
     if (!state) {
-      return [] as { id: string; name: string; color: string; items: typeof sorted }[];
+      return [] as CategoryGroup[];
     }
     const map = new Map<string, typeof sorted>();
     state.categories.forEach((category) => map.set(category.id, []));
@@ -84,11 +194,18 @@ export default function App() {
         map.set(item.categoryId, [item]);
       }
     });
-    return state.categories.map((category) => ({
-      ...category,
-      items: map.get(category.id) ?? []
-    }));
-  }, [state, sorted]);
+    const localeTag = locale === "zh" ? "zh-Hans-CN" : "en-US";
+    return state.categories.map((category) => {
+      const items = map.get(category.id) ?? [];
+      const { rootItems, tree } = buildCategoryTree(items, localeTag);
+      return {
+        ...category,
+        items,
+        rootItems,
+        tree
+      };
+    });
+  }, [state, sorted, locale]);
 
   const totalCount = state?.bookmarks.length ?? 0;
   const defaultCategoryName =
@@ -96,11 +213,90 @@ export default function App() {
     DEFAULT_CATEGORY_ID;
   const visibleCount = sorted.length;
   const compactMode = state?.ui.compactMode ?? false;
+  const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
+  const [visibleNodeItems, setVisibleNodeItems] = useState<Record<string, number>>({});
+
+  const getNodeKey = useCallback((categoryId: string, path: string) => `${categoryId}::${path}`, []);
+
+  useEffect(() => {
+    const validKeys = new Set<string>();
+    grouped.forEach((category) => {
+      validKeys.add(getNodeKey(category.id, "__root__"));
+      const walk = (nodes: FolderNode[]) => {
+        nodes.forEach((node) => {
+          validKeys.add(getNodeKey(category.id, node.path));
+          walk(node.children);
+        });
+      };
+      walk(category.tree);
+    });
+
+    setCollapsedNodes((current) => {
+      const next: Record<string, boolean> = {};
+      Object.keys(current).forEach((key) => {
+        if (validKeys.has(key)) {
+          next[key] = current[key];
+        }
+      });
+      return next;
+    });
+
+    setVisibleNodeItems((current) => {
+      const next: Record<string, number> = {};
+      Object.keys(current).forEach((key) => {
+        if (validKeys.has(key)) {
+          next[key] = current[key];
+        }
+      });
+      return next;
+    });
+  }, [grouped, getNodeKey]);
+
+  const isCollapsed = useCallback(
+    (categoryId: string, path: string, depth: number) => {
+      const key = getNodeKey(categoryId, path);
+      if (Object.prototype.hasOwnProperty.call(collapsedNodes, key)) {
+        return collapsedNodes[key];
+      }
+      return depth >= 2;
+    },
+    [collapsedNodes, getNodeKey]
+  );
+
+  const toggleNode = useCallback(
+    (categoryId: string, path: string, depth: number) => {
+      const key = getNodeKey(categoryId, path);
+      setCollapsedNodes((current) => ({
+        ...current,
+        [key]: !(Object.prototype.hasOwnProperty.call(current, key) ? current[key] : depth >= 2)
+      }));
+    },
+    [getNodeKey]
+  );
+
+  const getVisibleCount = useCallback(
+    (categoryId: string, path: string) => {
+      const key = getNodeKey(categoryId, path);
+      return visibleNodeItems[key] ?? NODE_PAGE_SIZE;
+    },
+    [getNodeKey, visibleNodeItems]
+  );
+
+  const loadMoreNodeItems = useCallback(
+    (categoryId: string, path: string, total: number) => {
+      const key = getNodeKey(categoryId, path);
+      setVisibleNodeItems((current) => {
+        const nextCount = Math.min(total, (current[key] ?? NODE_PAGE_SIZE) + NODE_PAGE_SIZE);
+        return { ...current, [key]: nextCount };
+      });
+    },
+    [getNodeKey]
+  );
 
   const handleClassify = () => {
     setBusy(true);
     setStatus(null);
-    chrome.runtime.sendMessage({ type: "CLASSIFY_CURRENT_TAB" }, (response) => {
+    chrome.runtime.sendMessage({ type: "CLASSIFY_CURRENT_TAB" }, (response: ClassifyResponse) => {
       if (chrome.runtime.lastError) {
         const message =
           chrome.runtime.lastError.message ||
@@ -116,6 +312,52 @@ export default function App() {
         appendClientLog(message);
       } else {
         setTransientStatus(t("已加入智能收藏夹。", "Saved to Favortex."), "success");
+        if (response.suggestion?.categoryName) {
+          const suggestion = response.suggestion;
+          const detail = suggestion.reason
+            ? t("建议理由：{reason}", "Reason: {reason}", { reason: suggestion.reason })
+            : t("建议可提升后续自动归类准确度。", "Suggested to improve future auto-grouping.");
+          const confirmed = window.confirm(
+            t(
+              "建议新建分组“{name}”并移动当前收藏。\n{detail}\n是否立即创建？",
+              "Suggested new category \"{name}\" for this bookmark.\n{detail}\nCreate now?",
+              { name: suggestion.categoryName, detail }
+            )
+          );
+          if (confirmed) {
+            chrome.runtime.sendMessage(
+              {
+                type: "CREATE_CATEGORY_AND_MOVE",
+                payload: {
+                  url: suggestion.url,
+                  categoryName: suggestion.categoryName
+                }
+              },
+              (moveResponse: { ok: boolean; error?: string }) => {
+                if (chrome.runtime.lastError) {
+                  const message =
+                    chrome.runtime.lastError.message ||
+                    t("创建分组失败。", "Failed to create category.");
+                  setTransientStatus(message, "error");
+                  appendClientLog(message);
+                  return;
+                }
+                if (!moveResponse?.ok) {
+                  const message =
+                    moveResponse?.error ||
+                    t("创建分组失败。", "Failed to create category.");
+                  setTransientStatus(message, "error");
+                  appendClientLog(message);
+                  return;
+                }
+                setTransientStatus(
+                  t("已创建分组并移动收藏。", "Category created and bookmark moved."),
+                  "success"
+                );
+              }
+            );
+          }
+        }
       }
       setBusy(false);
     });
@@ -223,6 +465,205 @@ export default function App() {
     [appendClientLog, setTransientStatus, t]
   );
 
+  const renderBookmarkItem = useCallback(
+    (item: Bookmark) => {
+      const favicon = item.favicon || fallbackIcon;
+      if (compactMode) {
+        return (
+          <div
+            key={item.id}
+            className="bookmark-row rounded-xl border border-white/70 bg-white/80 px-3 py-2 transition lift-on-hover"
+          >
+            <img
+              src={favicon}
+              alt=""
+              aria-hidden="true"
+              loading="lazy"
+              className="favicon"
+              onError={(event) => {
+                if (event.currentTarget.src !== fallbackIcon) {
+                  event.currentTarget.src = fallbackIcon;
+                }
+              }}
+            />
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 hover:text-slate-900"
+              title={item.title || item.url}
+            >
+              {item.title || item.url}
+            </a>
+            <div className="bookmark-actions ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                className="icon-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  togglePinned(item.id);
+                }}
+                aria-label={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+                title={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+              >
+                {item.pinned ? <StarFilledIcon /> : <StarIcon />}
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  void copyUrl(item.url);
+                }}
+                aria-label={t("复制链接", "Copy link")}
+                title={t("复制链接", "Copy link")}
+              >
+                <ClipboardCopyIcon />
+              </button>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={(event) => {
+                  event.preventDefault();
+                  deleteBookmark(item.id);
+                }}
+                aria-label={t("删除收藏", "Delete")}
+                title={t("删除收藏", "Delete")}
+              >
+                <TrashIcon />
+              </button>
+            </div>
+          </div>
+        );
+      }
+      return (
+        <div
+          key={item.id}
+          className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 transition lift-on-hover"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex min-w-0 items-start gap-2">
+              <img
+                src={favicon}
+                alt=""
+                aria-hidden="true"
+                loading="lazy"
+                className="favicon mt-0.5"
+                onError={(event) => {
+                  if (event.currentTarget.src !== fallbackIcon) {
+                    event.currentTarget.src = fallbackIcon;
+                  }
+                }}
+              />
+              <a
+                href={item.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm font-semibold text-slate-800 line-clamp-2 hover:text-slate-900"
+              >
+                {item.title || item.url}
+              </a>
+            </div>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={(event) => {
+                event.preventDefault();
+                togglePinned(item.id);
+              }}
+              aria-label={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+              title={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
+            >
+              {item.pinned ? <StarFilledIcon /> : <StarIcon />}
+            </button>
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
+            <span>{getDomain(item.url) || item.url}</span>
+            <span>{formatDate(dateFormatter, item.createdAt)}</span>
+          </div>
+          <div className="mt-2 flex items-center justify-end gap-2">
+            <button
+              type="button"
+              className="icon-button"
+              onClick={(event) => {
+                event.preventDefault();
+                void copyUrl(item.url);
+              }}
+              aria-label={t("复制链接", "Copy link")}
+              title={t("复制链接", "Copy link")}
+            >
+              <ClipboardCopyIcon />
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              onClick={(event) => {
+                event.preventDefault();
+                deleteBookmark(item.id);
+              }}
+              aria-label={t("删除收藏", "Delete")}
+              title={t("删除收藏", "Delete")}
+            >
+              <TrashIcon />
+            </button>
+          </div>
+        </div>
+      );
+    },
+    [compactMode, copyUrl, dateFormatter, deleteBookmark, fallbackIcon, t, togglePinned]
+  );
+
+  const renderFolderNode = useCallback(
+    (categoryId: string, node: FolderNode) => {
+      const collapsed = isCollapsed(categoryId, node.path, node.depth);
+      const visible = getVisibleCount(categoryId, node.path);
+      const shownDirectItems = node.directItems.slice(0, visible);
+
+      return (
+        <div
+          key={`${categoryId}-${node.path}`}
+          className={clsx(
+            "rounded-xl border border-white/60 bg-white/75 px-2 py-2",
+            node.depth > 1 ? "ml-3" : ""
+          )}
+        >
+          <button
+            type="button"
+            onClick={() => toggleNode(categoryId, node.path, node.depth)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-semibold text-slate-700 hover:bg-white/70"
+          >
+            <span className="flex items-center gap-2 min-w-0">
+              <ChevronDownIcon className={clsx("shrink-0 transition", collapsed ? "-rotate-90" : "rotate-0")} />
+              <span className="truncate">{node.label}</span>
+            </span>
+            <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] text-slate-500">
+              {node.total}
+            </span>
+          </button>
+
+          {!collapsed ? (
+            <div className="mt-2 space-y-2 pl-2">
+              {shownDirectItems.map((item) => renderBookmarkItem(item))}
+              {node.directItems.length > shownDirectItems.length ? (
+                <button
+                  type="button"
+                  onClick={() => loadMoreNodeItems(categoryId, node.path, node.directItems.length)}
+                  className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                >
+                  {t("加载更多 ({count})", "Load more ({count})", {
+                    count: node.directItems.length - shownDirectItems.length
+                  })}
+                </button>
+              ) : null}
+              {node.children.map((child) => renderFolderNode(categoryId, child))}
+            </div>
+          ) : null}
+        </div>
+      );
+    },
+    [getVisibleCount, isCollapsed, loadMoreNodeItems, renderBookmarkItem, t, toggleNode]
+  );
+
   return (
     <div className="popup-scroll px-4 pt-4 pb-8">
       <div className="glass-card animate-float rounded-3xl p-4">
@@ -327,154 +768,60 @@ export default function App() {
                         {t("还没有收藏内容", "No bookmarks yet")}
                       </div>
                     ) : (
-                      category.items.slice(0, 6).map((item) => {
-                        const favicon = item.favicon || fallbackIcon;
-                        if (compactMode) {
-                          return (
-                            <div
-                              key={item.id}
-                              className="bookmark-row rounded-xl border border-white/70 bg-white/80 px-3 py-2 transition lift-on-hover"
+                      <div className="space-y-2">
+                        {category.rootItems.length > 0 ? (
+                          <div className="rounded-xl border border-white/60 bg-white/75 px-2 py-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleNode(category.id, "__root__", 0)}
+                              className="flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1 text-left text-xs font-semibold text-slate-700 hover:bg-white/70"
                             >
-                              <img
-                                src={favicon}
-                                alt=""
-                                aria-hidden="true"
-                                loading="lazy"
-                                className="favicon"
-                                onError={(event) => {
-                                  if (event.currentTarget.src !== fallbackIcon) {
-                                    event.currentTarget.src = fallbackIcon;
-                                  }
-                                }}
-                              />
-                              <a
-                                href={item.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800 hover:text-slate-900"
-                                title={item.title || item.url}
-                              >
-                                {item.title || item.url}
-                              </a>
-                              <div className="bookmark-actions ml-auto flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  className="icon-button"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    togglePinned(item.id);
-                                  }}
-                                  aria-label={
-                                    item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")
-                                  }
-                                  title={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
-                                >
-                                  {item.pinned ? <StarFilledIcon /> : <StarIcon />}
-                                </button>
-                                <button
-                                  type="button"
-                                  className="icon-button"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    void copyUrl(item.url);
-                                  }}
-                                  aria-label={t("复制链接", "Copy link")}
-                                  title={t("复制链接", "Copy link")}
-                                >
-                                  <ClipboardCopyIcon />
-                                </button>
-                                <button
-                                  type="button"
-                                  className="icon-button"
-                                  onClick={(event) => {
-                                    event.preventDefault();
-                                    deleteBookmark(item.id);
-                                  }}
-                                  aria-label={t("删除收藏", "Delete")}
-                                  title={t("删除收藏", "Delete")}
-                                >
-                                  <TrashIcon />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        }
-                        return (
-                          <div
-                            key={item.id}
-                            className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 transition lift-on-hover"
-                          >
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="flex min-w-0 items-start gap-2">
-                                <img
-                                  src={favicon}
-                                  alt=""
-                                  aria-hidden="true"
-                                  loading="lazy"
-                                  className="favicon mt-0.5"
-                                  onError={(event) => {
-                                    if (event.currentTarget.src !== fallbackIcon) {
-                                      event.currentTarget.src = fallbackIcon;
-                                    }
-                                  }}
+                              <span className="flex items-center gap-2">
+                                <ChevronDownIcon
+                                  className={clsx(
+                                    "transition",
+                                    isCollapsed(category.id, "__root__", 0)
+                                      ? "-rotate-90"
+                                      : "rotate-0"
+                                  )}
                                 />
-                                <a
-                                  href={item.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-sm font-semibold text-slate-800 line-clamp-2 hover:text-slate-900"
-                                >
-                                  {item.title || item.url}
-                                </a>
+                                {t("未分配子分类", "No subcategory")}
+                              </span>
+                              <span className="rounded-full border border-white/70 bg-white/80 px-2 py-0.5 text-[11px] text-slate-500">
+                                {category.rootItems.length}
+                              </span>
+                            </button>
+                            {!isCollapsed(category.id, "__root__", 0) ? (
+                              <div className="mt-2 space-y-2 pl-2">
+                                {category.rootItems
+                                  .slice(0, getVisibleCount(category.id, "__root__"))
+                                  .map((item) => renderBookmarkItem(item))}
+                                {category.rootItems.length > getVisibleCount(category.id, "__root__") ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      loadMoreNodeItems(
+                                        category.id,
+                                        "__root__",
+                                        category.rootItems.length
+                                      )
+                                    }
+                                    className="outline-button rounded-full px-3 py-1 text-[11px] font-semibold"
+                                  >
+                                    {t("加载更多 ({count})", "Load more ({count})", {
+                                      count:
+                                        category.rootItems.length -
+                                        getVisibleCount(category.id, "__root__")
+                                    })}
+                                  </button>
+                                ) : null}
                               </div>
-                              <button
-                                type="button"
-                                className="icon-button"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  togglePinned(item.id);
-                                }}
-                                aria-label={
-                                  item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")
-                                }
-                                title={item.pinned ? t("取消置顶", "Unpin") : t("置顶", "Pin")}
-                              >
-                                {item.pinned ? <StarFilledIcon /> : <StarIcon />}
-                              </button>
-                            </div>
-                            <div className="mt-1 flex items-center justify-between text-[11px] text-slate-500">
-                              <span>{getDomain(item.url) || item.url}</span>
-                              <span>{formatDate(dateFormatter, item.createdAt)}</span>
-                            </div>
-                            <div className="mt-2 flex items-center justify-end gap-2">
-                              <button
-                                type="button"
-                                className="icon-button"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  void copyUrl(item.url);
-                                }}
-                                aria-label={t("复制链接", "Copy link")}
-                                title={t("复制链接", "Copy link")}
-                              >
-                                <ClipboardCopyIcon />
-                              </button>
-                              <button
-                                type="button"
-                                className="icon-button"
-                                onClick={(event) => {
-                                  event.preventDefault();
-                                  deleteBookmark(item.id);
-                                }}
-                                aria-label={t("删除收藏", "Delete")}
-                                title={t("删除收藏", "Delete")}
-                              >
-                                <TrashIcon />
-                              </button>
-                            </div>
+                            ) : null}
                           </div>
-                        );
-                      })
+                        ) : null}
+
+                        {category.tree.map((node) => renderFolderNode(category.id, node))}
+                      </div>
                     )}
                   </Accordion.Content>
                 </Accordion.Item>
